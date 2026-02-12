@@ -35,9 +35,12 @@ async function getBrowser() {
   return browser;
 }
 
-async function getPage(url, waitSelector, timeout = 20000) {
+async function getPage(url, waitSelector, timeout = 60000) {
   const b = await getBrowser();
   const page = await b.newPage();
+  
+  // 뷰포트 최소화 (메모리 절약)
+  await page.setViewport({ width: 1280, height: 720 });
   
   await page.setUserAgent(
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -45,10 +48,14 @@ async function getPage(url, waitSelector, timeout = 20000) {
   await page.setExtraHTTPHeaders({
     'Accept-Language': 'en-US,en;q=0.9',
   });
-  // Block images/fonts to speed up
+  // Block images/fonts/css/ads to speed up
   await page.setRequestInterception(true);
   page.on('request', (req) => {
-    if (['image', 'font', 'media'].includes(req.resourceType())) {
+    const type = req.resourceType();
+    const blockTypes = ['image', 'font', 'media', 'stylesheet'];
+    const blockUrls = ['google-analytics', 'googletagmanager', 'facebook', 'doubleclick', 'ads'];
+    const url = req.url();
+    if (blockTypes.includes(type) || blockUrls.some(b => url.includes(b))) {
       req.abort();
     } else {
       req.continue();
@@ -56,12 +63,12 @@ async function getPage(url, waitSelector, timeout = 20000) {
   });
 
   try {
-    await page.goto(url, { waitUntil: 'networkidle2', timeout });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
+    // 짧은 대기 후 추가 JS 렌더링 기다리기
+    await new Promise(r => setTimeout(r, 3000));
     if (waitSelector) {
-      await page.waitForSelector(waitSelector, { timeout: 10000 }).catch(() => {});
+      await page.waitForSelector(waitSelector, { timeout: 15000 }).catch(() => {});
     }
-    // 추가 대기 (JS 렌더링)
-    await new Promise(r => setTimeout(r, 2000));
     const html = await page.content();
     return html;
   } finally {
