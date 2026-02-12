@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: proto-scraper
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.mjs
+    envVars:
+      - key: API_KEY
+        value: proto-scraper-2026
+      - key: PUPPETEER_SKIP_DOWNLOAD
+        value: "false"
