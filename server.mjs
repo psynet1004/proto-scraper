@@ -84,7 +84,10 @@ async function supabaseGet(table, params = '') {
 }
 
 async function supabaseUpsert(table, data, onConflict) {
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+  const url = onConflict 
+    ? `${SUPABASE_URL}/rest/v1/${table}?on_conflict=${onConflict}`
+    : `${SUPABASE_URL}/rest/v1/${table}`;
+  const r = await fetch(url, {
     method: 'POST',
     headers: {
       'apikey': SUPABASE_KEY,
@@ -94,7 +97,11 @@ async function supabaseUpsert(table, data, onConflict) {
     },
     body: JSON.stringify(data),
   });
-  return { ok: r.ok, status: r.status };
+  let body = '';
+  if (!r.ok) {
+    try { body = await r.text(); } catch(e) {}
+  }
+  return { ok: r.ok, status: r.status, body };
 }
 
 // ====== HEALTH ======
@@ -183,7 +190,10 @@ async function doScrapeAndSave() {
       }, 'match_id,source');
 
       if (result.ok) saved++;
-      else console.log(`  DB error: ${p.source} #${match.match_number}: ${result.status}`);
+      else {
+        const errBody = result.body || '';
+        console.log(`  DB error: ${p.source} #${match.match_number}: ${result.status} ${errBody}`);
+      }
     }
 
     console.log(`  #${match.match_number} ${h} vs ${a}: ${preds.length}/4`);
