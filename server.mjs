@@ -106,100 +106,117 @@ async function supabaseUpsert(table, data, onConflict) {
 
 // ====== HEALTH ======
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', service: 'proto-scraper-server', time: new Date().toISOString() });
+  res.json({ status: 'ok', service: 'proto-scraper-server', scraping: isRunning, time: new Date().toISOString() });
 });
+
+// ====== SCRAPE LOCK ======
+let isRunning = false;
 
 // ====== SCRAPE & SAVE (비동기 - 즉시 응답) ======
 app.post('/scrape-and-save', auth, async (req, res) => {
-  // 즉시 응답 (Netlify 타임아웃 방지)
+  if (isRunning) {
+    return res.json({ message: 'Already running, skipped', timestamp: new Date().toISOString() });
+  }
   res.json({ message: 'Scraping started', timestamp: new Date().toISOString() });
-
-  // 백그라운드에서 실행
   doScrapeAndSave().catch(e => console.error('Background scrape error:', e.message));
 });
 
 // ====== 수동 트리거 (GET) ======
 app.get('/scrape-and-save', auth, async (req, res) => {
+  if (isRunning) {
+    return res.json({ message: 'Already running, skipped', timestamp: new Date().toISOString() });
+  }
   res.json({ message: 'Scraping started', timestamp: new Date().toISOString() });
   doScrapeAndSave().catch(e => console.error('Background scrape error:', e.message));
 });
 
 async function doScrapeAndSave() {
-  console.log('=== Starting scrape & save ===');
+  if (isRunning) return;
+  isRunning = true;
 
-  // 1. DB에서 최신 회차 가져오기
-  const latest = await supabaseGet('proto_matches',
-    'match_type=eq.normal&order=round_number.desc&limit=1&select=round_year,round_number');
+  try {
+    console.log('=== Starting scrape & save ===');
 
-  if (!latest?.length) {
-    console.log('No matches in DB');
-    return;
-  }
+    // 1. DB에서 최신 회차 가져오기
+    const latest = await supabaseGet('proto_matches',
+      'match_type=eq.normal&order=round_number.desc&limit=1&select=round_year,round_number');
 
-  const { round_year, round_number } = latest[0];
-  console.log(`Round: ${round_year}-${round_number}`);
-
-  const matches = await supabaseGet('proto_matches',
-    `round_year=eq.${round_year}&round_number=eq.${round_number}&match_type=eq.normal&order=match_number&select=*`);
-
-  console.log(`Found ${matches?.length || 0} matches`);
-
-  // 2. 4개 사이트 HTML 가져오기 (순차)
-  const sources = [
-    { name: 'windrawwin', url: 'https://www.windrawwin.com/predictions/today/', wait: 'table' },
-    { name: 'predictz', url: 'https://www.predictz.com/predictions/', wait: 'table' },
-    { name: 'forebet', url: 'https://www.forebet.com/en/football-predictions', wait: '.rcnt' },
-    { name: 'vitibet', url: 'https://www.vitibet.com/index.php?clanek=quicktips&sekce=fotbal&lang=en', wait: 'table' },
-  ];
-
-  const pages = {};
-  for (const src of sources) {
-    try {
-      console.log(`  Fetching ${src.name}...`);
-      pages[src.name] = await getPage(src.url, src.wait);
-      console.log(`  ${src.name}: ${pages[src.name].length} chars`);
-    } catch (e) {
-      console.log(`  ${src.name}: FAILED - ${e.message}`);
-      pages[src.name] = '';
+    if (!latest?.length) {
+      console.log('No matches in DB');
+      return;
     }
-  }
 
-  // 3. 각 경기별 예측 추출 & 저장
-  let saved = 0;
-  for (const match of matches || []) {
-    if (!match.home_team_en || !match.away_team_en) continue;
+    const { round_year, round_number } = latest[0];
+    console.log(`Round: ${round_year}-${round_number}`);
 
-    const h = match.home_team_en;
-    const a = match.away_team_en;
-    const preds = [];
+    const matches = await supabaseGet('proto_matches',
+      `round_year=eq.${round_year}&round_number=eq.${round_number}&match_type=eq.normal&order=match_number&select=*`);
+
+    console.log(`Found ${matches?.length || 0} matches`);
+
+    // 2. 각 사이트를 하나씩 가져오고, 파싱하고, HTML 해제 (메모리 절약)
+    const sources = [
+      { name: 'windrawwin', url: 'https://www.windrawwin.com/predictions/today/', wait: null },
+      { name: 'predictz', url: 'https://www.predictz.com/predictions/', wait: null },
+      { name: 'forebet', url: 'https://www.forebet.com/en/football-predictions', wait: null },
+      { name: 'vitibet', url: 'https://www.vitibet.com/index.php?clanek=quicktips&sekce=fotbal&lang=en', wait: null },
+    ];
+
+    let saved = 0;
 
     for (const src of sources) {
-      const p = extractPrediction(pages[src.name], h, a, src.name);
-      if (p) preds.push({ ...p, source: src.name });
-    }
-
-    // Supabase에 저장
-    for (const p of preds) {
-      const result = await supabaseUpsert('predictions', {
-        match_id: match.id,
-        source: p.source,
-        predicted_score: p.predicted_score || null,
-        predicted_result: p.predicted_result || null,
-        confidence: p.confidence || null,
-        scraped_at: new Date().toISOString(),
-      }, 'match_id,source');
-
-      if (result.ok) saved++;
-      else {
-        const errBody = result.body || '';
-        console.log(`  DB error: ${p.source} #${match.match_number}: ${result.status} ${errBody}`);
+      let html = '';
+      try {
+        console.log(`  Fetching ${src.name}...`);
+        html = await getPage(src.url, src.wait);
+        console.log(`  ${src.name}: ${html.length} chars`);
+      } catch (e) {
+        console.log(`  ${src.name}: FAILED - ${e.message}`);
+        continue;
       }
+
+      // 브라우저 닫아서 메모리 확보
+      if (browser) {
+        try { await browser.close(); } catch(e) {}
+        browser = null;
+      }
+
+      // 바로 파싱 & 저장
+      for (const match of matches || []) {
+        if (!match.home_team_en || !match.away_team_en) continue;
+        const p = extractPrediction(html, match.home_team_en, match.away_team_en, src.name);
+        if (p) {
+          const result = await supabaseUpsert('predictions', {
+            match_id: match.id,
+            source: src.name,
+            predicted_score: p.predicted_score || null,
+            predicted_result: p.predicted_result || null,
+            confidence: p.confidence || null,
+            scraped_at: new Date().toISOString(),
+          }, 'match_id,source');
+
+          if (result.ok) saved++;
+          else {
+            const errBody = result.body || '';
+            console.log(`  DB error: ${src.name} #${match.match_number}: ${result.status} ${errBody}`);
+          }
+        }
+      }
+
+      // HTML 메모리 해제
+      html = '';
     }
 
-    console.log(`  #${match.match_number} ${h} vs ${a}: ${preds.length}/4`);
-  }
+    console.log(`=== Done: ${saved} predictions saved ===`);
 
-  console.log(`=== Done: ${saved} predictions saved ===`);
+  } finally {
+    isRunning = false;
+    // 최종 브라우저 정리
+    if (browser) {
+      try { await browser.close(); } catch(e) {}
+      browser = null;
+    }
+  }
 }
 
 // ====== TEST ENDPOINT ======
