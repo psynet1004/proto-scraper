@@ -255,6 +255,44 @@ app.post('/scrape', auth, async (req, res) => {
   res.json({ success: true, results, timestamp: new Date().toISOString() });
 });
 
+// ====== DEBUG: 팀 검색 ======
+app.get('/debug/:site/:team', auth, async (req, res) => {
+  const urls = {
+    windrawwin: 'https://www.windrawwin.com/predictions/today/',
+    predictz: 'https://www.predictz.com/predictions/',
+    forebet: 'https://www.forebet.com/en/football-predictions',
+    vitibet: 'https://www.vitibet.com/index.php?clanek=quicktips&sekce=fotbal&lang=en',
+  };
+  const site = req.params.site;
+  const team = req.params.team;
+  if (!urls[site]) return res.json({ error: 'Invalid site' });
+
+  try {
+    const html = await getPage(urls[site], 'table');
+    const $ = cheerio.load(html);
+    const found = [];
+    
+    // HTML에서 팀명이 포함된 모든 요소 찾기
+    $('tr, div, a, span, td').each((_, el) => {
+      const text = $(el).text().trim();
+      if (text.toLowerCase().includes(team.toLowerCase()) && text.length < 500) {
+        found.push({
+          tag: $(el).prop('tagName'),
+          class: $(el).attr('class') || '',
+          text: text.substring(0, 200),
+        });
+      }
+    });
+
+    // 중복 제거 (가장 짧은 것 우선)
+    const unique = found.sort((a, b) => a.text.length - b.text.length).slice(0, 10);
+
+    res.json({ site, team, total_found: found.length, matches: unique, html_length: html.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ====== PREDICTION EXTRACTION ======
 function extractPrediction(html, homeEn, awayEn, source) {
   if (!html) return null;
