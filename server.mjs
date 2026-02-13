@@ -385,20 +385,22 @@ function parseWindrawwin(html, homeEn, awayEn) {
   return result;
 }
 
-// predictz: table tr 구조, 팀명은 a 태그, 스코어는 마지막 td
+// predictz: 다양한 HTML 구조 탐색
 function parsePredictz(html, homeEn, awayEn) {
   const $ = cheerio.load(html);
   let result = null;
 
-  $('tr').each((_, row) => {
+  // 1차: tr 기반
+  $('tr, div[class*="pointed"], div[class*="match"], div[class*="row"], div[class*="fixture"]').each((_, row) => {
     if (result) return;
     const text = $(row).text();
     if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
 
-    // 모든 td에서 스코어 패턴 찾기
-    $(row).find('td, span, a, div').each((_, el) => {
+    // 스코어 찾기 (다양한 패턴)
+    $(row).find('td, span, a, div, strong, b, em').each((_, el) => {
       if (result) return;
       const t = $(el).text().trim();
+      // N-N 또는 N - N 패턴
       const m = t.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
       if (m) {
         const hg = parseInt(m[1]), ag = parseInt(m[2]);
@@ -411,7 +413,7 @@ function parsePredictz(html, homeEn, awayEn) {
 
     // 1X2 fallback
     if (!result) {
-      const cells = $(row).find('td');
+      const cells = $(row).find('td, span, div');
       cells.each((_, el) => {
         if (result) return;
         const t = $(el).text().trim();
@@ -420,24 +422,68 @@ function parsePredictz(html, homeEn, awayEn) {
         else if (t.toUpperCase() === 'X') result = { predicted_score: null, predicted_result: '무' };
       });
     }
+
+    // Home/Away/Draw text fallback
+    if (!result) {
+      const allText = $(row).text().toLowerCase();
+      if (allText.includes('home win') || allText.includes('home')) result = { predicted_score: null, predicted_result: '승' };
+      else if (allText.includes('away win') || allText.includes('away')) result = { predicted_score: null, predicted_result: '패' };
+      else if (allText.includes('draw')) result = { predicted_score: null, predicted_result: '무' };
+    }
   });
+
+  // 2차: 전체 HTML에서 텍스트 기반 검색 (fallback)
+  if (!result) {
+    const allText = $.text();
+    // "Dortmund v Mainz" 또는 "Dortmund vs Mainz" 같은 패턴 찾기
+    const homeWords = homeEn.toLowerCase().split(/\s+/);
+    const keyWord = homeWords.find(w => w.length >= 4) || homeWords[0];
+    
+    $('a, span, div, td').each((_, el) => {
+      if (result) return;
+      const t = $(el).text().trim();
+      if (t.length > 200) return;
+      if (!fuzzy(t, homeEn) || !fuzzy(t, awayEn)) return;
+      
+      // 부모/형제에서 스코어 찾기
+      const parent = $(el).parent();
+      const grandparent = parent.parent();
+      
+      for (const container of [parent, grandparent]) {
+        if (result) return;
+        container.find('td, span, a, div, strong').each((_, scoreEl) => {
+          if (result) return;
+          const st = $(scoreEl).text().trim();
+          const sm = st.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
+          if (sm) {
+            const hg = parseInt(sm[1]), ag = parseInt(sm[2]);
+            result = {
+              predicted_score: `${hg}-${ag}`,
+              predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
+            };
+          }
+        });
+      }
+    });
+  }
 
   return result;
 }
 
-// forebet: .rcnt 컨테이너, 스코어는 .ex_sc 또는 .foremark
+// forebet: 다양한 HTML 구조 탐색
 function parseForebet(html, homeEn, awayEn) {
   const $ = cheerio.load(html);
   let result = null;
 
-  // forebet의 각 경기 블록
-  $('.rcnt, tr, [class*="prevRes"]').each((_, row) => {
+  // forebet의 각 경기 블록 - 더 넓은 셀렉터
+  $('.rcnt, tr, div[class*="match"], div[class*="pred"], div[class*="row"], div[class*="contentRow"]').each((_, row) => {
     if (result) return;
     const text = $(row).text();
+    if (text.length > 2000) return; // 너무 큰 컨테이너 스킵
     if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
 
     // 스코어 찾기
-    $(row).find('[class*="ex_sc"], [class*="score"], .foremark, span, div').each((_, el) => {
+    $(row).find('[class*="ex_sc"], [class*="score"], .foremark, span, div, td, strong').each((_, el) => {
       if (result) return;
       const t = $(el).text().trim();
       const m = t.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
@@ -453,9 +499,9 @@ function parseForebet(html, homeEn, awayEn) {
     // 1X2 fallback: 가장 높은 확률의 결과
     if (!result) {
       const probs = {};
-      $(row).find('[class*="fprc"], [class*="prob"]').each((i, el) => {
+      $(row).find('[class*="fprc"], [class*="prob"], [class*="prc"]').each((i, el) => {
         const pct = parseInt($(el).text().trim());
-        if (pct > 0) probs[i] = pct;
+        if (pct > 0 && pct <= 100) probs[i] = pct;
       });
       const keys = Object.keys(probs);
       if (keys.length >= 3) {
@@ -466,7 +512,47 @@ function parseForebet(html, homeEn, awayEn) {
         else if (idx === 2) result = { predicted_score: null, predicted_result: '패', confidence: probs[maxI] };
       }
     }
+
+    // 1/X/2 text fallback
+    if (!result) {
+      const allText = $(row).text();
+      const tip = allText.match(/tip[:\s]*([1X2])/i);
+      if (tip) {
+        if (tip[1] === '1') result = { predicted_score: null, predicted_result: '승' };
+        else if (tip[1] === '2') result = { predicted_score: null, predicted_result: '패' };
+        else if (tip[1].toUpperCase() === 'X') result = { predicted_score: null, predicted_result: '무' };
+      }
+    }
   });
+
+  // 2차: 전체 검색
+  if (!result) {
+    $('a, span, div, td').each((_, el) => {
+      if (result) return;
+      const t = $(el).text().trim();
+      if (t.length > 200) return;
+      if (!fuzzy(t, homeEn) || !fuzzy(t, awayEn)) return;
+      
+      const parent = $(el).parent();
+      const grandparent = parent.parent();
+      
+      for (const container of [parent, grandparent]) {
+        if (result) return;
+        container.find('span, div, td, strong').each((_, scoreEl) => {
+          if (result) return;
+          const st = $(scoreEl).text().trim();
+          const sm = st.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
+          if (sm) {
+            const hg = parseInt(sm[1]), ag = parseInt(sm[2]);
+            result = {
+              predicted_score: `${hg}-${ag}`,
+              predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
+            };
+          }
+        });
+      }
+    });
+  }
 
   return result;
 }
