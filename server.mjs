@@ -606,14 +606,287 @@ function fuzzy(text, team) {
   return false;
 }
 
+// ====== 한국팀명 → 영문팀명 매핑 ======
+const TEAM_MAP = {
+  // A-League
+  '웨스원더': 'Western Sydney', '웰링피닉': 'Wellington Phoenix', '멜버빅토': 'Melbourne Victory',
+  '브리로어': 'Brisbane Roar', '시드니FC': 'Sydney FC', '애들유나': 'Adelaide United',
+  '퍼스글로': 'Perth Glory', '뉴캐제츠': 'Newcastle Jets', '센트마리': 'Central Coast Mariners',
+  '맥아서': 'Macarthur FC', '멜버시티': 'Melbourne City', '오클랜드': 'Auckland FC',
+  // J리그 / J2리그
+  '비셀고베': 'Vissel Kobe', 'V바렌나': 'V-Varen Nagasaki', '가시마': 'Kashima Antlers',
+  '요코마리': 'Yokohama F. Marinos', 'FC도쿄': 'FC Tokyo', '우라와': 'Urawa Reds',
+  '마치다': 'Machida Zelvia', '미토': 'Mito HollyHock', '시미즈': 'Shimizu S-Pulse',
+  '교토상가': 'Kyoto Sanga', '산프히로': 'Sanfrecce Hiroshima', '오카야마': 'Fagiano Okayama',
+  '요코FC': 'Yokohama FC', '센다이': 'Vegalta Sendai', 'RB오미야': 'Omiya Ardija',
+  '삿포로': 'Consadole Sapporo', '가시와': 'Kashiwa Reysol', '도쿄베르': 'Tokyo Verdy',
+  '도치기시': 'Tochigi SC', '아키타': 'Blaublitz Akita', '도쿠시마': 'Tokushima Vortis',
+  '니가타': 'Albirex Niigata', '후쿠오카': 'Avispa Fukuoka', 'C오사카': 'Cerezo Osaka',
+  'G오사카': 'Gamba Osaka', '나고야': 'Nagoya Grampus', '제프유나': 'JEF United',
+  '가와사키': 'Kawasaki Frontale', '코후': 'Ventforet Kofu', '주빌로': 'Jubilo Iwata',
+  '사간도스': 'Sagan Tosu', '나가사키': 'V-Varen Nagasaki', '히로시마': 'Sanfrecce Hiroshima',
+  '세레소': 'Cerezo Osaka', '간바': 'Gamba Osaka', '우라와레': 'Urawa Reds',
+  '삿포로콘': 'Consadole Sapporo', '요코하마': 'Yokohama F. Marinos',
+  // Premier League
+  '리버풀': 'Liverpool', '브라이턴': 'Brighton', 'A빌라': 'Aston Villa', '뉴캐슬U': 'Newcastle United',
+  '맨시티': 'Manchester City', '아스널': 'Arsenal', '첼시': 'Chelsea', '맨유': 'Manchester United',
+  '토트넘': 'Tottenham', '에버턴': 'Everton', '웨스트햄': 'West Ham', '풀럼': 'Fulham',
+  '본머스': 'Bournemouth', '울버햄프': 'Wolverhampton', '크리스탈': 'Crystal Palace',
+  '노팅엄': 'Nottingham Forest', '브렌트포': 'Brentford', '사우샘프': 'Southampton',
+  '레스터C': 'Leicester City', '입스위치': 'Ipswich Town', '리즈유나': 'Leeds United',
+  '선덜랜드': 'Sunderland', '번리': 'Burnley',
+  // Championship
+  '헐시티': 'Hull City', '렉섬': 'Wrexham', '더비카운': 'Derby County', '스완지C': 'Swansea City',
+  '포츠머스': 'Portsmouth', '셰필드U': 'Sheffield United', '프레스턴': 'Preston', '왓포드': 'Watford',
+  '퀸즈파크': 'QPR', '블랙번': 'Blackburn', '셰필드웬': 'Sheffield Wednesday', '밀월': 'Millwall',
+  '노리치C': 'Norwich City', '웨스브로': 'West Brom', '버밍엄C': 'Birmingham City', '리즈U': 'Leeds United',
+  '옥스퍼드': 'Oxford United', '스토크C': 'Stoke City', '카디프': 'Cardiff City',
+  '미들즈브': 'Middlesbrough', '코벤트리': 'Coventry City', '루턴타운': 'Luton Town',
+  '플리머스': 'Plymouth Argyle', '브리스톨': 'Bristol City',
+  // La Liga
+  '에스파뇰': 'Espanyol', 'RC셀타': 'Celta Vigo', '헤타페': 'Getafe', '비야레알': 'Villarreal',
+  '세비야': 'Sevilla', '알라베스': 'Alaves', '레알마드': 'Real Madrid', '소시에다': 'Real Sociedad',
+  '라요': 'Rayo Vallecano', 'AT마드': 'Atletico Madrid', '마요르카': 'Mallorca', '베티스': 'Real Betis',
+  '바르셀로': 'Barcelona', '발렌시아': 'Valencia', '오사수나': 'Osasuna', '지로나': 'Girona',
+  '라스팔마': 'Las Palmas', '레가네스': 'Leganes', '발라돌리': 'Real Valladolid',
+  // La Liga 2
+  '레반테': 'Levante', '오비에도': 'Real Oviedo', '빌바오': 'Athletic Bilbao',
+  // Serie A
+  '피사SC': 'Pisa', 'AC밀란': 'AC Milan', '코모1907': 'Como', '피오렌티': 'Fiorentina',
+  '라치오': 'Lazio', '아탈란타': 'Atalanta', '인테르': 'Inter Milan', '유벤투스': 'Juventus',
+  '우디네세': 'Udinese', '사수올로': 'Sassuolo', '크레모네': 'Cremonese', '제노아': 'Genoa',
+  '파르마': 'Parma', '엘라스': 'Hellas Verona', '토리노': 'Torino', '볼로나': 'Bologna',
+  '나폴리': 'Napoli', 'AS로마': 'AS Roma', '엠폴리': 'Empoli', '카글리아': 'Cagliari',
+  '레체': 'Lecce', '몬자': 'Monza', '베네치아': 'Venezia', '사레르니': 'Salernitana',
+  // Bundesliga
+  '도르트문': 'Dortmund', '마인츠05': 'Mainz', '레버쿠젠': 'Bayer Leverkusen', '장크트파': 'St. Pauli',
+  '프랑크푸': 'Eintracht Frankfurt', '뮌헨글라': 'Monchengladbach', '브레멘': 'Werder Bremen',
+  '바이뮌헨': 'Bayern Munich', '호펜하임': 'Hoffenheim', '프라이부': 'Freiburg',
+  '슈투트가': 'Stuttgart', '퀼른': 'Koln', '아우크스': 'Augsburg', '하이덴하': 'Heidenheim',
+  '라이프치': 'RB Leipzig', '볼프스부': 'Wolfsburg', '보훔': 'Bochum', '볼프스': 'Wolfsburg',
+  '다름슈타': 'Darmstadt',
+  // Bundesliga 2
+  '함부르크': 'Hamburger SV', 'U베를린': 'Union Berlin',
+  // Ligue 1
+  '스타드렌': 'Rennes', 'PSG': 'PSG', 'AS모나코': 'Monaco', '낭트': 'Nantes',
+  '마르세유': 'Marseille', 'RC스트라': 'Strasbourg', '릴OSC': 'Lille', '브레스투': 'Brest',
+  '르아브르': 'Le Havre', '툴루즈': 'Toulouse', '메스': 'Metz', '오세르': 'Auxerre',
+  '리옹': 'Lyon', 'OGC니스': 'Nice', '랑스': 'Lens', '몽펠리에': 'Montpellier',
+  '클레르몽': 'Clermont', '로리앙': 'Lorient',
+  // Ligue 2
+  '파리FC': 'Paris FC', '앙제SCO': 'Angers SCO',
+  // Eredivisie
+  '플렌담': 'Feyenoord', 'PSV': 'PSV', '헤라클레': 'Heracles', '브레다': 'NAC Breda',
+  '엑셀시오': 'Excelsior', '알크마르': 'AZ Alkmaar', '아약스': 'Ajax', 'F시타르': 'Fortuna Sittard',
+  '흐로닝언': 'Groningen', '위트레흐': 'Utrecht', '페예노르': 'Feyenoord', '고어헤드': 'Go Ahead Eagles',
+  '헤이렌베': 'Heerenveen', '즈볼러': 'PEC Zwolle', '스파로테': 'Sparta Rotterdam',
+  '네이메헌': 'NEC Nijmegen', '트벤테': 'Twente', '텔스타': 'Telstar',
+  // 한국 리그명 매핑
+  '엘체': 'Elche', '오사수니': 'Osasuna',
+};
+
+// 리그명 매핑 (와이즈토토 → DB)
+const LEAGUE_MAP = {
+  'A리그': 'A-League', 'J1백년': 'J리그', 'J2백년': 'J2리그', 'J1리그': 'J리그', 'J2리그': 'J2리그',
+  '프리미어': 'PremierLeague', 'EPL': 'PremierLeague',
+  'EFL챔': 'Championship', 'EFL챔피': 'Championship',
+  '라리가': 'LaLiga', '라리가2': 'LaLiga2', '세리에A': 'SerieA', '세리에B': 'SerieB',
+  '분데스리': 'Bundesliga', '분데스2': 'Bundesliga2',
+  '프리그1': 'Ligue1', '리그1': 'Ligue1', '리그2': 'Ligue2', '프리그2': 'Ligue2',
+  '에레디비': 'Eredivisie', '에레디2': 'Eredivisie2',
+  // 축약형
+  'A리그': 'A-League',
+};
+
+// ====== FETCH MATCHES FROM WISETOTO ======
+app.get('/fetch-matches', auth, async (req, res) => {
+  res.json({ message: 'Fetching matches started', timestamp: new Date().toISOString() });
+  doFetchMatches().catch(e => console.error('Fetch matches error:', e.message));
+});
+
+async function doFetchMatches() {
+  console.log('=== Fetching matches from WiseToto ===');
+  
+  let b = null;
+  try {
+    b = await puppeteer.launch({
+      headless: 'new',
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--single-process', '--no-zygote'],
+    });
+
+    const page = await b.newPage();
+    await page.setViewport({ width: 1280, height: 720 });
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+
+    // 1. 와이즈토토 메인 → 프로토 승부식 페이지
+    console.log('  Loading wisetoto...');
+    await page.goto('https://www.wisetoto.com/index.htm?tab_type=proto&game_type=pt&game_category=pt1', {
+      waitUntil: 'domcontentloaded', timeout: 30000,
+    });
+    await new Promise(r => setTimeout(r, 5000));
+
+    // 2. 축구 버튼 클릭
+    console.log('  Clicking soccer filter...');
+    try {
+      await page.evaluate(() => {
+        const btn = document.querySelector('a.btn.soccer, a[title="축구"]');
+        if (btn) btn.click();
+      });
+      await new Promise(r => setTimeout(r, 3000));
+    } catch (e) {
+      console.log('  Soccer button click failed, trying without filter');
+    }
+
+    // 3. HTML 가져오기
+    const html = await page.content();
+    console.log(`  HTML: ${html.length} chars`);
+    await page.close();
+
+    // 4. 회차 정보 파싱
+    const $ = cheerio.load(html);
+    
+    // 회차 번호 추출
+    let roundYear = new Date().getFullYear().toString();
+    let roundNumber = null;
+    
+    // "2026년도" / "20회차" 텍스트에서 추출
+    const yearText = $('select, .year, [class*="year"]').text() || html;
+    const roundMatch = html.match(/(\d{4})년도.*?(\d+)회차/s) || html.match(/game_year=(\d{4})&game_round=(\d+)/);
+    if (roundMatch) {
+      roundYear = roundMatch[1];
+      roundNumber = parseInt(roundMatch[2]);
+    }
+    
+    // fallback: select option에서 찾기
+    if (!roundNumber) {
+      $('select option[selected], .round_select option[selected]').each((_, el) => {
+        const t = $(el).text().trim();
+        const m = t.match(/(\d+)회차/);
+        if (m) roundNumber = parseInt(m[1]);
+      });
+    }
+    
+    console.log(`  Round: ${roundYear}-${roundNumber || '?'}`);
+
+    // 5. 경기 목록 파싱 - 테이블 행에서 추출
+    const matches = [];
+    
+    $('tr').each((_, row) => {
+      const cells = $(row).find('td');
+      if (cells.length < 5) return;
+      
+      const no = $(cells[0]).text().trim();
+      const matchNum = parseInt(no);
+      if (isNaN(matchNum)) return;
+      
+      // 유형 칸 확인 - 비어있으면 일반 승무패
+      const typeCell = $(cells[3]).text().trim();
+      if (typeCell && typeCell !== '') return; // H, U, SUM 등은 스킵
+      
+      const league = $(cells[2]).text().trim().replace(/[⚽🏀🏐⚾]/g, '').trim();
+      const matchInfo = $(cells[4]).text().trim(); // "홈팀 vs 원정팀" 또는 "홈팀 N : N 원정팀"
+      
+      // 홈팀, 원정팀 추출
+      // 패턴: "홈팀 N : N 원정팀" 또는 "홈팀 : 원정팀"
+      let homeKr = '', awayKr = '';
+      
+      // 링크에서 팀명 추출 시도
+      const links = $(cells[4]).find('a');
+      if (links.length >= 2) {
+        homeKr = $(links[0]).text().trim();
+        awayKr = $(links[1]).text().trim();
+      } else {
+        // 텍스트에서 추출: "홈팀 N : N 원정팀" or "홈팀 : 원정팀"
+        const cleaned = matchInfo.replace(/\d+\s*:\s*\d+/, ':').replace(/\s+/g, ' ');
+        const parts = cleaned.split(':').map(s => s.trim());
+        if (parts.length === 2) {
+          homeKr = parts[0].replace(/\d+$/, '').trim();
+          awayKr = parts[1].replace(/^\d+/, '').trim();
+        }
+      }
+      
+      if (!homeKr || !awayKr) return;
+      
+      // 영문팀명 매핑
+      const homeEn = TEAM_MAP[homeKr] || '';
+      const awayEn = TEAM_MAP[awayKr] || '';
+      const leagueDb = LEAGUE_MAP[league] || league;
+      
+      matches.push({
+        round_year: roundYear,
+        round_number: roundNumber,
+        match_number: matchNum,
+        home_team_kr: homeKr,
+        away_team_kr: awayKr,
+        home_team_en: homeEn,
+        away_team_en: awayEn,
+        league: leagueDb,
+        match_type: 'normal',
+      });
+    });
+
+    console.log(`  Parsed ${matches.length} soccer matches`);
+    
+    if (!matches.length) {
+      console.log('  No matches found, check HTML structure');
+      return;
+    }
+
+    // 영문명 없는 팀 로그
+    const unmapped = matches.filter(m => !m.home_team_en || !m.away_team_en);
+    if (unmapped.length) {
+      console.log(`  ⚠ ${unmapped.length} matches with unmapped teams:`);
+      unmapped.forEach(m => {
+        if (!m.home_team_en) console.log(`    Missing: '${m.home_team_kr}'`);
+        if (!m.away_team_en) console.log(`    Missing: '${m.away_team_kr}'`);
+      });
+    }
+
+    // 6. Supabase에 upsert
+    const result = await supabaseUpsert('proto_matches', matches, 'round_year,round_number,match_number');
+    console.log(`  DB upsert: ${result.status} (${result.ok ? 'OK' : 'FAIL'})`);
+    if (!result.ok) console.log(`  DB error: ${result.body}`);
+    
+    console.log(`=== Done: ${matches.length} matches saved for round ${roundYear}-${roundNumber} ===`);
+
+  } catch (e) {
+    console.error('Fetch matches error:', e.message);
+  } finally {
+    if (b) await b.close().catch(() => {});
+  }
+}
+
 // ====== START ======
 app.listen(PORT, () => {
   console.log(`Proto Scraper Server running on port ${PORT}`);
   
   // 서버 시작 후 10초 뒤 자동 스크래핑 (Render가 깨어날 때마다)
-  setTimeout(() => {
-    console.log('Auto-trigger: scraping on startup...');
-    doScrapeAndSave().catch(e => console.error('Auto scrape error:', e.message));
+  setTimeout(async () => {
+    try {
+      // 먼저 경기 수 확인 → 부족하면 와이즈토토에서 가져오기
+      const latest = await supabaseGet('proto_matches',
+        'match_type=eq.normal&order=round_number.desc&limit=1&select=round_year,round_number');
+      
+      if (latest?.length) {
+        const { round_year, round_number } = latest[0];
+        const matches = await supabaseGet('proto_matches',
+          `round_year=eq.${round_year}&round_number=eq.${round_number}&match_type=eq.normal&select=id`);
+        
+        console.log(`Current matches in DB: ${matches?.length || 0}`);
+        
+        if (!matches?.length || matches.length < 30) {
+          console.log('Auto-trigger: fetching matches from WiseToto first...');
+          await doFetchMatches();
+          await new Promise(r => setTimeout(r, 5000)); // 5초 대기
+        }
+      }
+      
+      console.log('Auto-trigger: scraping on startup...');
+      await doScrapeAndSave();
+    } catch (e) {
+      console.error('Auto startup error:', e.message);
+    }
   }, 10000);
 });
 
