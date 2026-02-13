@@ -297,61 +297,200 @@ app.get('/debug/:site/:team', auth, async (req, res) => {
 function extractPrediction(html, homeEn, awayEn, source) {
   if (!html) return null;
   try {
-    const $ = cheerio.load(html);
-    let result = null;
+    switch (source) {
+      case 'windrawwin': return parseWindrawwin(html, homeEn, awayEn);
+      case 'predictz': return parsePredictz(html, homeEn, awayEn);
+      case 'forebet': return parseForebet(html, homeEn, awayEn);
+      case 'vitibet': return parseVitibet(html, homeEn, awayEn);
+      default: return null;
+    }
+  } catch (e) {
+    console.log(`  Parse error (${source}): ${e.message}`);
+    return null;
+  }
+}
 
-    // 공통: 모든 행을 순회하며 팀명 매칭
-    const selectors = source === 'forebet' 
-      ? '.rcnt, tr, [class*="predict"]' 
-      : 'tr, .pointed, [class*="match"]';
+// windrawwin: div.wttd.wtfixt 에 팀명, span.predscore 에 스코어
+function parseWindrawwin(html, homeEn, awayEn) {
+  const $ = cheerio.load(html);
+  let result = null;
 
-    $(selectors).each((_, row) => {
-      if (result) return;
-      const text = $(row).text();
-      if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
+  // 각 경기 행을 찾기 - wtfixt 클래스가 있는 div
+  $('div.wtfixt, div[class*="wtfixt"]').each((_, row) => {
+    if (result) return;
+    const text = $(row).text();
+    if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
 
-      // 스코어 패턴
-      const scoreEls = source === 'forebet'
-        ? $(row).find('[class*="ex_sc"], [class*="score"], .foremark, td, span')
-        : $(row).find('td, span, a, div');
+    // 같은 부모(경기 행 컨테이너)에서 predscore 찾기
+    const parent = $(row).parent();
+    const grandparent = parent.parent();
+    
+    // predscore를 여러 레벨에서 찾기
+    let score = '';
+    for (const container of [parent, grandparent]) {
+      const sc = container.find('.predscore').first().text().trim();
+      if (sc) { score = sc; break; }
+      const sc2 = container.find('.wtsc').first().text().trim();
+      if (sc2) { score = sc2; break; }
+    }
 
-      scoreEls.each((_, el) => {
-        if (result) return;
-        const t = $(el).text().trim();
-        const m = t.match(/^(\d+)\s*[-\u2013:]\s*(\d+)$/);
-        if (m) {
-          const hg = parseInt(m[1]), ag = parseInt(m[2]);
-          result = {
-            predicted_score: `${hg}-${ag}`,
-            predicted_result: hg > ag ? '\uc2b9' : hg < ag ? '\ud328' : '\ubb34',
-          };
-        }
+    if (!score) {
+      // 바로 다음 형제들에서 찾기
+      const nextSiblings = $(row).nextAll();
+      nextSiblings.each((_, sib) => {
+        if (score) return;
+        const t = $(sib).text().trim();
+        const m = t.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
+        if (m) score = t;
+        const ps = $(sib).find('.predscore').first().text().trim();
+        if (ps) score = ps;
       });
+    }
 
-      // 1X2 fallback
-      if (!result) {
-        $(row).find('td, span').each((_, el) => {
-          if (result) return;
-          const t = $(el).text().trim();
-          if (t === '1') result = { predicted_score: null, predicted_result: '\uc2b9' };
-          else if (t === '2') result = { predicted_score: null, predicted_result: '\ud328' };
-          else if (t.toUpperCase() === 'X') result = { predicted_score: null, predicted_result: '\ubb34' };
-        });
-      }
+    const m = score.match(/(\d+)\s*[-–:]\s*(\d+)/);
+    if (m) {
+      const hg = parseInt(m[1]), ag = parseInt(m[2]);
+      result = {
+        predicted_score: `${hg}-${ag}`,
+        predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
+      };
+    }
 
-      // forebet 확률
-      if (result && source === 'forebet') {
-        $(row).find('[class*="fprc"], [class*="prob"]').each((_, el) => {
-          const pct = parseInt($(el).text().trim());
-          if (pct > 0 && pct <= 100 && !result.confidence) result.confidence = pct;
-        });
+    // Home Win / Away Win / Draw fallback
+    if (!result) {
+      const allText = grandparent.text().toLowerCase();
+      if (allText.includes('home win')) result = { predicted_score: null, predicted_result: '승' };
+      else if (allText.includes('away win')) result = { predicted_score: null, predicted_result: '패' };
+      else if (allText.includes('draw')) result = { predicted_score: null, predicted_result: '무' };
+    }
+  });
+
+  return result;
+}
+
+// predictz: table tr 구조, 팀명은 a 태그, 스코어는 마지막 td
+function parsePredictz(html, homeEn, awayEn) {
+  const $ = cheerio.load(html);
+  let result = null;
+
+  $('tr').each((_, row) => {
+    if (result) return;
+    const text = $(row).text();
+    if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
+
+    // 모든 td에서 스코어 패턴 찾기
+    $(row).find('td, span, a, div').each((_, el) => {
+      if (result) return;
+      const t = $(el).text().trim();
+      const m = t.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
+      if (m) {
+        const hg = parseInt(m[1]), ag = parseInt(m[2]);
+        result = {
+          predicted_score: `${hg}-${ag}`,
+          predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
+        };
       }
     });
 
-    return result;
-  } catch (e) {
-    return null;
-  }
+    // 1X2 fallback
+    if (!result) {
+      const cells = $(row).find('td');
+      cells.each((_, el) => {
+        if (result) return;
+        const t = $(el).text().trim();
+        if (t === '1') result = { predicted_score: null, predicted_result: '승' };
+        else if (t === '2') result = { predicted_score: null, predicted_result: '패' };
+        else if (t.toUpperCase() === 'X') result = { predicted_score: null, predicted_result: '무' };
+      });
+    }
+  });
+
+  return result;
+}
+
+// forebet: .rcnt 컨테이너, 스코어는 .ex_sc 또는 .foremark
+function parseForebet(html, homeEn, awayEn) {
+  const $ = cheerio.load(html);
+  let result = null;
+
+  // forebet의 각 경기 블록
+  $('.rcnt, tr, [class*="prevRes"]').each((_, row) => {
+    if (result) return;
+    const text = $(row).text();
+    if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
+
+    // 스코어 찾기
+    $(row).find('[class*="ex_sc"], [class*="score"], .foremark, span, div').each((_, el) => {
+      if (result) return;
+      const t = $(el).text().trim();
+      const m = t.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
+      if (m) {
+        const hg = parseInt(m[1]), ag = parseInt(m[2]);
+        result = {
+          predicted_score: `${hg}-${ag}`,
+          predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
+        };
+      }
+    });
+
+    // 1X2 fallback: 가장 높은 확률의 결과
+    if (!result) {
+      const probs = {};
+      $(row).find('[class*="fprc"], [class*="prob"]').each((i, el) => {
+        const pct = parseInt($(el).text().trim());
+        if (pct > 0) probs[i] = pct;
+      });
+      const keys = Object.keys(probs);
+      if (keys.length >= 3) {
+        const maxI = keys.reduce((a, b) => probs[a] > probs[b] ? a : b);
+        const idx = parseInt(maxI);
+        if (idx === 0) result = { predicted_score: null, predicted_result: '승', confidence: probs[maxI] };
+        else if (idx === 1) result = { predicted_score: null, predicted_result: '무', confidence: probs[maxI] };
+        else if (idx === 2) result = { predicted_score: null, predicted_result: '패', confidence: probs[maxI] };
+      }
+    }
+  });
+
+  return result;
+}
+
+// vitibet: table tr 구조
+function parseVitibet(html, homeEn, awayEn) {
+  const $ = cheerio.load(html);
+  let result = null;
+
+  $('tr').each((_, row) => {
+    if (result) return;
+    const text = $(row).text();
+    if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
+
+    // 스코어 패턴
+    $(row).find('td, span, a').each((_, el) => {
+      if (result) return;
+      const t = $(el).text().trim();
+      const m = t.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
+      if (m) {
+        const hg = parseInt(m[1]), ag = parseInt(m[2]);
+        result = {
+          predicted_score: `${hg}-${ag}`,
+          predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
+        };
+      }
+    });
+
+    // 1X2 fallback
+    if (!result) {
+      $(row).find('td, span').each((_, el) => {
+        if (result) return;
+        const t = $(el).text().trim();
+        if (t === '1') result = { predicted_score: null, predicted_result: '승' };
+        else if (t === '2') result = { predicted_score: null, predicted_result: '패' };
+        else if (t.toUpperCase() === 'X') result = { predicted_score: null, predicted_result: '무' };
+      });
+    }
+  });
+
+  return result;
 }
 
 function fuzzy(text, team) {
