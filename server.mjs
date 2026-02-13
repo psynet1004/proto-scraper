@@ -521,7 +521,15 @@ function fuzzy(text, team) {
 }
 
 // ====== START ======
-app.listen(PORT, () => console.log(`Proto Scraper Server running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Proto Scraper Server running on port ${PORT}`);
+  
+  // 서버 시작 후 10초 뒤 자동 스크래핑 (Render가 깨어날 때마다)
+  setTimeout(() => {
+    console.log('Auto-trigger: scraping on startup...');
+    doScrapeAndSave().catch(e => console.error('Auto scrape error:', e.message));
+  }, 10000);
+});
 
 process.on('SIGTERM', async () => {
   if (browser) await browser.close();
