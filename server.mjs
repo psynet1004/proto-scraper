@@ -60,7 +60,9 @@ async function getPage(url, waitSelector, timeout = 60000, extraWait = 0) {
   });
 
   try {
-    await page.goto(url, { waitUntil: 'networkidle2', timeout });
+    // forebet needs networkidle2 for Cloudflare, others use domcontentloaded
+    const waitUntil = extraWait > 0 ? 'networkidle2' : 'domcontentloaded';
+    await page.goto(url, { waitUntil, timeout });
     await new Promise(r => setTimeout(r, 3000 + extraWait));
     if (waitSelector) {
       await page.waitForSelector(waitSelector, { timeout: 15000 }).catch(() => {});
@@ -423,20 +425,23 @@ function parseWindrawwin(html, homeEn, awayEn) {
 }
 
 // predictz: div.pptr 구조 (실제 확인됨)
+// 홈팀과 원정팀이 별도의 div.pptr 행에 있을 수 있음
 // <div class="pptr ptcnt"><div class="pttd ptmobh">Liverpool</div>...
+// <div class="pptr ptcnt"><div class="pttd ptmoba">Brighton</div>...
 function parsePredictz(html, homeEn, awayEn) {
   const $ = cheerio.load(html);
   let result = null;
 
-  // 1차: predictz 전용 - div.pptr (실제 구조)
-  $('.pptr, .pointed, div[class*="pointed"]').each((_, row) => {
+  // 전략 1: 상위 컨테이너에서 두 팀 모두 포함하는 블록 찾기
+  // ptcon, ptdiv, table, div 등 다양한 컨테이너 시도
+  $('div[class*="pointed"], div[class*="ptcon"], div[class*="ptdiv"], div[class*="pttr"], .pointed, table').each((_, container) => {
     if (result) return;
-    const text = $(row).text();
-    if (text.length > 2000) return;
+    const text = $(container).text();
+    if (text.length > 5000 || text.length < 10) return;
     if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
 
-    // 스코어 찾기 - div/span에서 N-N 패턴
-    $(row).find('div, span, a, td, strong, b').each((_, el) => {
+    // 스코어 찾기
+    $(container).find('div, span, a, td, strong').each((_, el) => {
       if (result) return;
       const t = $(el).text().trim();
       const m = t.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
@@ -449,36 +454,55 @@ function parsePredictz(html, homeEn, awayEn) {
       }
     });
 
-    // 1X2 fallback - "1", "X", "2" 텍스트
+    // 1X2 fallback
     if (!result) {
-      $(row).find('div, span, td').each((_, el) => {
-        if (result) return;
-        const t = $(el).text().trim();
-        if (t === '1') result = { predicted_score: null, predicted_result: '승' };
-        else if (t === '2') result = { predicted_score: null, predicted_result: '패' };
-        else if (t.toUpperCase() === 'X') result = { predicted_score: null, predicted_result: '무' };
-      });
-    }
-
-    // nred/nyellow/ngreen 클래스에서 결과 추론
-    if (!result) {
-      const nred = $(row).find('.nred, [class*="nred"]').length;
-      const ngreen = $(row).find('.ngreen, [class*="ngreen"]').length;
-      const nyellow = $(row).find('.nyellow, [class*="nyellow"]').length;
-      // ptlast5boxh = 홈팀 폼, ptlast5boxa = 원정팀 폼
-      // 이건 폼 데이터이므로 스코어 예측에는 직접 사용 안 함
-    }
-    
-    // Home Win / Away Win / Draw 텍스트 fallback
-    if (!result) {
-      const allText = $(row).text().toLowerCase();
-      if (allText.includes('home win') || allText.includes('home')) result = { predicted_score: null, predicted_result: '승' };
-      else if (allText.includes('away win') || allText.includes('away')) result = { predicted_score: null, predicted_result: '패' };
+      const allText = $(container).text().toLowerCase();
+      if (allText.includes('home win')) result = { predicted_score: null, predicted_result: '승' };
+      else if (allText.includes('away win')) result = { predicted_score: null, predicted_result: '패' };
       else if (allText.includes('draw')) result = { predicted_score: null, predicted_result: '무' };
     }
   });
 
-  // 2차: tr 기반 fallback
+  // 전략 2: pptr 행 중 홈팀이 있는 행의 부모/조부모에서 원정팀+스코어 찾기
+  if (!result) {
+    $('div.pptr, .pptr').each((_, row) => {
+      if (result) return;
+      const text = $(row).text();
+      if (!fuzzy(text, homeEn)) return;
+
+      // 이 행의 부모로 올라가며 원정팀 찾기
+      let container = $(row).parent();
+      for (let depth = 0; depth < 5 && container.length; depth++) {
+        const containerText = container.text();
+        if (fuzzy(containerText, awayEn)) {
+          // 스코어 찾기
+          container.find('div, span, a, strong').each((_, el) => {
+            if (result) return;
+            const t = $(el).text().trim();
+            const m = t.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
+            if (m) {
+              const hg = parseInt(m[1]), ag = parseInt(m[2]);
+              result = {
+                predicted_score: `${hg}-${ag}`,
+                predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
+              };
+            }
+          });
+          
+          if (!result) {
+            const ct = containerText.toLowerCase();
+            if (ct.includes('home win')) result = { predicted_score: null, predicted_result: '승' };
+            else if (ct.includes('away win')) result = { predicted_score: null, predicted_result: '패' };
+            else if (ct.includes('draw')) result = { predicted_score: null, predicted_result: '무' };
+          }
+          break;
+        }
+        container = container.parent();
+      }
+    });
+  }
+
+  // 전략 3: tr 기반 fallback
   if (!result) {
     $('tr').each((_, row) => {
       if (result) return;
@@ -500,35 +524,31 @@ function parsePredictz(html, homeEn, awayEn) {
     });
   }
 
-  // 3차: 전체에서 팀명 포함 요소 검색
+  // 전략 4: 아무 요소에서든 두 팀명이 가까이 있는 곳 찾기
   if (!result) {
-    $('div, a, span, td').each((_, el) => {
-      if (result) return;
-      const t = $(el).text().trim();
-      if (t.length > 300 || t.length < 5) return;
-      if (!fuzzy(t, homeEn) || !fuzzy(t, awayEn)) return;
-      
-      // 부모에서 스코어 찾기
-      const parent = $(el).parent();
-      const gp = parent.parent();
-      const ggp = gp.parent();
-      
-      for (const container of [parent, gp, ggp]) {
-        if (result) return;
-        container.find('div, span, strong').each((_, scoreEl) => {
-          if (result) return;
-          const st = $(scoreEl).text().trim();
-          const sm = st.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
-          if (sm) {
-            const hg = parseInt(sm[1]), ag = parseInt(sm[2]);
+    const lowerHtml = html.toLowerCase();
+    const homeKey = homeEn.toLowerCase().split(/\s+/).find(w => w.length >= 4) || homeEn.toLowerCase();
+    const awayKey = awayEn.toLowerCase().split(/\s+/).find(w => w.length >= 4) || awayEn.toLowerCase();
+    
+    const homeIdx = lowerHtml.indexOf(homeKey);
+    if (homeIdx >= 0) {
+      // 홈팀 위치에서 ±2000자 내에 원정팀이 있는지
+      const region = lowerHtml.substring(Math.max(0, homeIdx - 500), homeIdx + 2000);
+      if (region.includes(awayKey)) {
+        // 해당 영역의 HTML에서 스코어 패턴 찾기
+        const regionHtml = html.substring(Math.max(0, homeIdx - 500), homeIdx + 2000);
+        const scoreMatch = regionHtml.match(/(\d+)\s*[-–:]\s*(\d+)/);
+        if (scoreMatch) {
+          const hg = parseInt(scoreMatch[1]), ag = parseInt(scoreMatch[2]);
+          if (hg < 20 && ag < 20) { // 합리적인 스코어
             result = {
               predicted_score: `${hg}-${ag}`,
               predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
             };
           }
-        });
+        }
       }
-    });
+    }
   }
 
   return result;
