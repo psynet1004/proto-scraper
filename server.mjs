@@ -170,6 +170,24 @@ async function doScrapeAndSave() {
         console.log(`  Fetching ${src.name}...`);
         html = await getPage(src.url, src.wait);
         console.log(`  ${src.name}: ${html.length} chars`);
+      
+      // predictz/forebet HTML 구조 디버그
+      if (src.name === 'predictz' || src.name === 'forebet') {
+        // 팀명이 있는지 확인
+        const testTeams = ['Liverpool', 'Rennes', 'Dortmund', 'Monaco', 'Ajax'];
+        for (const t of testTeams) {
+          const idx = html.toLowerCase().indexOf(t.toLowerCase());
+          if (idx >= 0) {
+            const snippet = html.substring(Math.max(0, idx - 100), idx + 200).replace(/\n/g, ' ').replace(/\s+/g, ' ');
+            console.log(`  ${src.name} FOUND "${t}" at ${idx}: ...${snippet}...`);
+            break;
+          }
+        }
+        if (!testTeams.some(t => html.toLowerCase().includes(t.toLowerCase()))) {
+          console.log(`  ${src.name} WARNING: no known team found in HTML!`);
+          console.log(`  ${src.name} HTML preview: ${html.substring(0, 500).replace(/\n/g, ' ')}`);
+        }
+      }
       } catch (e) {
         console.log(`  ${src.name}: FAILED - ${e.message}`);
         continue;
