@@ -38,7 +38,7 @@ async function getBrowser() {
   return browser;
 }
 
-async function getPage(url, waitSelector, timeout = 60000) {
+async function getPage(url, waitSelector, timeout = 60000, extraWait = 0) {
   const b = await getBrowser();
   const page = await b.newPage();
   await page.setViewport({ width: 1280, height: 720 });
@@ -49,8 +49,8 @@ async function getPage(url, waitSelector, timeout = 60000) {
   await page.setRequestInterception(true);
   page.on('request', (req) => {
     const type = req.resourceType();
-    const blockTypes = ['image', 'font', 'media', 'stylesheet'];
-    const blockUrls = ['google-analytics', 'googletagmanager', 'facebook', 'doubleclick', 'ads'];
+    const blockTypes = ['image', 'font', 'media'];
+    const blockUrls = ['google-analytics', 'googletagmanager', 'facebook', 'doubleclick'];
     const u = req.url();
     if (blockTypes.includes(type) || blockUrls.some(b => u.includes(b))) {
       req.abort();
@@ -60,8 +60,8 @@ async function getPage(url, waitSelector, timeout = 60000) {
   });
 
   try {
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
-    await new Promise(r => setTimeout(r, 3000));
+    await page.goto(url, { waitUntil: 'networkidle2', timeout });
+    await new Promise(r => setTimeout(r, 3000 + extraWait));
     if (waitSelector) {
       await page.waitForSelector(waitSelector, { timeout: 15000 }).catch(() => {});
     }
@@ -158,7 +158,7 @@ async function doScrapeAndSave() {
     const sources = [
       { name: 'windrawwin', url: 'https://www.windrawwin.com/predictions/today/', wait: null },
       { name: 'predictz', url: 'https://www.predictz.com/predictions/', wait: null },
-      { name: 'forebet', url: 'https://www.forebet.com/en/football-predictions', wait: null },
+      { name: 'forebet', url: 'https://www.forebet.com/en/football-predictions', wait: null, extraWait: 10000 },
       { name: 'vitibet', url: 'https://www.vitibet.com/index.php?clanek=quicktips&sekce=fotbal&lang=en', wait: null },
     ];
 
@@ -168,7 +168,7 @@ async function doScrapeAndSave() {
       let html = '';
       try {
         console.log(`  Fetching ${src.name}...`);
-        html = await getPage(src.url, src.wait);
+        html = await getPage(src.url, src.wait, 60000, src.extraWait || 0);
         console.log(`  ${src.name}: ${html.length} chars`);
       
       // predictz/forebet HTML 구조 디버그
@@ -422,22 +422,23 @@ function parseWindrawwin(html, homeEn, awayEn) {
   return result;
 }
 
-// predictz: 다양한 HTML 구조 탐색
+// predictz: div.pptr 구조 (실제 확인됨)
+// <div class="pptr ptcnt"><div class="pttd ptmobh">Liverpool</div>...
 function parsePredictz(html, homeEn, awayEn) {
   const $ = cheerio.load(html);
   let result = null;
 
-  // 1차: tr 기반
-  $('tr, div[class*="pointed"], div[class*="match"], div[class*="row"], div[class*="fixture"]').each((_, row) => {
+  // 1차: predictz 전용 - div.pptr (실제 구조)
+  $('.pptr, .pointed, div[class*="pointed"]').each((_, row) => {
     if (result) return;
     const text = $(row).text();
+    if (text.length > 2000) return;
     if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
 
-    // 스코어 찾기 (다양한 패턴)
-    $(row).find('td, span, a, div, strong, b, em').each((_, el) => {
+    // 스코어 찾기 - div/span에서 N-N 패턴
+    $(row).find('div, span, a, td, strong, b').each((_, el) => {
       if (result) return;
       const t = $(el).text().trim();
-      // N-N 또는 N - N 패턴
       const m = t.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
       if (m) {
         const hg = parseInt(m[1]), ag = parseInt(m[2]);
@@ -448,10 +449,9 @@ function parsePredictz(html, homeEn, awayEn) {
       }
     });
 
-    // 1X2 fallback
+    // 1X2 fallback - "1", "X", "2" 텍스트
     if (!result) {
-      const cells = $(row).find('td, span, div');
-      cells.each((_, el) => {
+      $(row).find('div, span, td').each((_, el) => {
         if (result) return;
         const t = $(el).text().trim();
         if (t === '1') result = { predicted_score: null, predicted_result: '승' };
@@ -460,7 +460,16 @@ function parsePredictz(html, homeEn, awayEn) {
       });
     }
 
-    // Home/Away/Draw text fallback
+    // nred/nyellow/ngreen 클래스에서 결과 추론
+    if (!result) {
+      const nred = $(row).find('.nred, [class*="nred"]').length;
+      const ngreen = $(row).find('.ngreen, [class*="ngreen"]').length;
+      const nyellow = $(row).find('.nyellow, [class*="nyellow"]').length;
+      // ptlast5boxh = 홈팀 폼, ptlast5boxa = 원정팀 폼
+      // 이건 폼 데이터이므로 스코어 예측에는 직접 사용 안 함
+    }
+    
+    // Home Win / Away Win / Draw 텍스트 fallback
     if (!result) {
       const allText = $(row).text().toLowerCase();
       if (allText.includes('home win') || allText.includes('home')) result = { predicted_score: null, predicted_result: '승' };
@@ -469,26 +478,44 @@ function parsePredictz(html, homeEn, awayEn) {
     }
   });
 
-  // 2차: 전체 HTML에서 텍스트 기반 검색 (fallback)
+  // 2차: tr 기반 fallback
   if (!result) {
-    const allText = $.text();
-    // "Dortmund v Mainz" 또는 "Dortmund vs Mainz" 같은 패턴 찾기
-    const homeWords = homeEn.toLowerCase().split(/\s+/);
-    const keyWord = homeWords.find(w => w.length >= 4) || homeWords[0];
-    
-    $('a, span, div, td').each((_, el) => {
+    $('tr').each((_, row) => {
+      if (result) return;
+      const text = $(row).text();
+      if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
+
+      $(row).find('td, span, a, div, strong').each((_, el) => {
+        if (result) return;
+        const t = $(el).text().trim();
+        const m = t.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
+        if (m) {
+          const hg = parseInt(m[1]), ag = parseInt(m[2]);
+          result = {
+            predicted_score: `${hg}-${ag}`,
+            predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
+          };
+        }
+      });
+    });
+  }
+
+  // 3차: 전체에서 팀명 포함 요소 검색
+  if (!result) {
+    $('div, a, span, td').each((_, el) => {
       if (result) return;
       const t = $(el).text().trim();
-      if (t.length > 200) return;
+      if (t.length > 300 || t.length < 5) return;
       if (!fuzzy(t, homeEn) || !fuzzy(t, awayEn)) return;
       
-      // 부모/형제에서 스코어 찾기
+      // 부모에서 스코어 찾기
       const parent = $(el).parent();
-      const grandparent = parent.parent();
+      const gp = parent.parent();
+      const ggp = gp.parent();
       
-      for (const container of [parent, grandparent]) {
+      for (const container of [parent, gp, ggp]) {
         if (result) return;
-        container.find('td, span, a, div, strong').each((_, scoreEl) => {
+        container.find('div, span, strong').each((_, scoreEl) => {
           if (result) return;
           const st = $(scoreEl).text().trim();
           const sm = st.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
