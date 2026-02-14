@@ -182,10 +182,12 @@ async function doScrapeAndSave() {
       }
 
       // 바로 파싱 & 저장
+      let matched = 0, unmatched = 0;
       for (const match of matches || []) {
         if (!match.home_team_en || !match.away_team_en) continue;
         const p = extractPrediction(html, match.home_team_en, match.away_team_en, src.name);
         if (p) {
+          matched++;
           const result = await supabaseUpsert('predictions', {
             match_id: match.id,
             source: src.name,
@@ -199,6 +201,23 @@ async function doScrapeAndSave() {
           else {
             const errBody = result.body || '';
             console.log(`  DB error: ${src.name} #${match.match_number}: ${result.status} ${errBody}`);
+          }
+        } else {
+          unmatched++;
+        }
+      }
+      console.log(`  ${src.name}: ${matched} matched, ${unmatched} unmatched`);
+      
+      // predictz/forebet 디버그: 처음 5개 미매칭 팀명 로그
+      if ((src.name === 'predictz' || src.name === 'forebet') && unmatched > matched) {
+        let debugCount = 0;
+        for (const match of matches || []) {
+          if (debugCount >= 5) break;
+          if (!match.home_team_en || !match.away_team_en) continue;
+          const p = extractPrediction(html, match.home_team_en, match.away_team_en, src.name);
+          if (!p) {
+            console.log(`  DEBUG ${src.name}: no match for "${match.home_team_en}" vs "${match.away_team_en}"`);
+            debugCount++;
           }
         }
       }
@@ -605,6 +624,60 @@ function fuzzy(text, team) {
   if (parts.length > 1 && parts[1].length >= 4 && t.includes(parts[1])) return true;
   return false;
 }
+
+// ====== HTML SAMPLE - 가벼운 디버그 (팀명 주변 HTML) ======
+app.get('/html-sample/:site/:team', auth, async (req, res) => {
+  const urls = {
+    windrawwin: 'https://www.windrawwin.com/predictions/today/',
+    predictz: 'https://www.predictz.com/predictions/',
+    forebet: 'https://www.forebet.com/en/football-predictions',
+    vitibet: 'https://www.vitibet.com/index.php?clanek=quicktips&sekce=fotbal&lang=en',
+  };
+  const site = req.params.site;
+  const team = req.params.team;
+  if (!urls[site]) return res.json({ error: 'Invalid site' });
+
+  try {
+    const html = await getPage(urls[site], null);
+    
+    // 팀명이 포함된 부분 찾기
+    const idx = html.toLowerCase().indexOf(team.toLowerCase());
+    const samples = [];
+    
+    if (idx >= 0) {
+      // 팀명 주변 500자
+      const start = Math.max(0, idx - 200);
+      const end = Math.min(html.length, idx + 300);
+      samples.push(html.substring(start, end));
+    }
+    
+    // cheerio로 팀명 포함된 행 찾기
+    const $ = cheerio.load(html);
+    const rows = [];
+    $('tr, .rcnt, div[class*="match"], div[class*="row"]').each((_, el) => {
+      const text = $(el).text();
+      if (text.toLowerCase().includes(team.toLowerCase()) && text.length < 1000) {
+        rows.push({
+          tag: el.name,
+          class: $(el).attr('class') || '',
+          html: $.html(el).substring(0, 500),
+          text: text.substring(0, 300),
+        });
+      }
+    });
+
+    // 브라우저 닫기
+    if (browser) { try { await browser.close(); } catch(e) {} browser = null; }
+
+    res.json({ 
+      site, team, found: idx >= 0, htmlLength: html.length,
+      context: samples[0] || 'NOT FOUND',
+      matchingRows: rows.slice(0, 3),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // ====== 한국팀명 → 영문팀명 매핑 ======
 const TEAM_MAP = {
