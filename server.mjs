@@ -1,6 +1,10 @@
 import express from 'express';
-import puppeteer from 'puppeteer';
+import puppeteerExtra from 'puppeteer-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import * as cheerio from 'cheerio';
+
+puppeteerExtra.use(StealthPlugin());
+const puppeteer = puppeteerExtra;
 
 const app = express();
 app.use(express.json());
