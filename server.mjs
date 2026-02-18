@@ -210,10 +210,11 @@ async function doScrapeAndSave() {
         'https://www.predictz.com/predictions/',
         'https://www.predictz.com/predictions/tomorrow/',
       ], wait: null, extraWait: 15000 },
-      { name: 'forebet', urls: [
-        'https://www.forebet.com/en/football-tips-and-predictions-for-today/predictions-1x2',
-        'https://www.forebet.com/en/football-tips-and-predictions-for-tomorrow/predictions-1x2',
-      ], wait: null, extraWait: 20000, humanize: true },
+      // forebet: Cloudflare Turnstile 완전 차단 - 데이터센터 IP로는 우회 불가. 비활성화.
+      // { name: 'forebet', urls: [
+      //   'https://www.forebet.com/en/football-tips-and-predictions-for-today/predictions-1x2',
+      //   'https://www.forebet.com/en/football-tips-and-predictions-for-tomorrow/predictions-1x2',
+      // ], wait: null, extraWait: 20000, humanize: true },
       { name: 'vitibet', urls: [
         // quicktips_toptips = next 7 days! 프로토 회차 전체를 커버
         'https://www.vitibet.com/index.php?clanek=quicktips_toptips&sekce=fotbal&lang=en',
