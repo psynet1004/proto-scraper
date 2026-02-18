@@ -47,11 +47,11 @@ async function getPage(url, waitSelector, timeout = 60000, extraWait = 0) {
   const page = await b.newPage();
   await page.setViewport({ width: 1280, height: 720 });
   await page.setUserAgent(
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
   );
   await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
   
-  // forebet (extraWait > 0): Cloudflare 우회를 위해 요청 차단 없이 완전한 브라우저로
+  // forebet/predictz (extraWait > 0): Cloudflare 우회를 위해 요청 차단 없이 완전한 브라우저로
   if (extraWait === 0) {
     await page.setRequestInterception(true);
     page.on('request', (req) => {
@@ -72,14 +72,16 @@ async function getPage(url, waitSelector, timeout = 60000, extraWait = 0) {
     await page.goto(url, { waitUntil, timeout });
     
     if (extraWait > 0) {
-      // Cloudflare 챌린지 대기: 최대 30초 동안 실제 콘텐츠 나타날 때까지 폴링
+      // Cloudflare 챌린지 대기: 최대 60초 동안 실제 콘텐츠 나타날 때까지 폴링
       console.log(`  Waiting for Cloudflare challenge...`);
-      for (let i = 0; i < 6; i++) {
+      for (let i = 0; i < 12; i++) {
         await new Promise(r => setTimeout(r, 5000));
         const title = await page.title();
-        console.log(`  CF check ${i+1}/6: title="${title}"`);
-        if (!title.includes('moment') && !title.includes('Just')) break;
+        console.log(`  CF check ${i+1}/12: title="${title}"`);
+        if (!title.includes('moment') && !title.includes('Just') && !title.includes('Checking')) break;
       }
+      // 추가 대기: 페이지 로딩 완료
+      await new Promise(r => setTimeout(r, 3000));
     } else {
       await new Promise(r => setTimeout(r, 3000));
     }
@@ -178,10 +180,10 @@ async function doScrapeAndSave() {
 
     // 2. 각 사이트를 하나씩 가져오고, 파싱하고, HTML 해제 (메모리 절약)
     const sources = [
-      { name: 'windrawwin', url: 'https://www.windrawwin.com/predictions/today/', wait: null },
-      { name: 'predictz', url: 'https://www.predictz.com/predictions/', wait: null },
+      { name: 'windrawwin', url: 'https://www.windrawwin.com/predictions/today/', wait: null, extraWait: 0 },
+      { name: 'predictz', url: 'https://www.predictz.com/predictions/', wait: null, extraWait: 15000 },
       { name: 'forebet', url: 'https://www.forebet.com/en/football-predictions', wait: '.homeTeam', extraWait: 15000 },
-      { name: 'vitibet', url: 'https://www.vitibet.com/index.php?clanek=quicktips&sekce=fotbal&lang=en', wait: null },
+      { name: 'vitibet', url: 'https://www.vitibet.com/index.php?clanek=quicktips&sekce=fotbal&lang=en', wait: null, extraWait: 0 },
     ];
 
     let saved = 0;
@@ -193,23 +195,21 @@ async function doScrapeAndSave() {
         html = await getPage(src.url, src.wait, 60000, src.extraWait || 0);
         console.log(`  ${src.name}: ${html.length} chars`);
       
-      // predictz/forebet HTML 구조 디버그
-      if (src.name === 'predictz' || src.name === 'forebet') {
-        // 팀명이 있는지 확인
-        const testTeams = ['Liverpool', 'Rennes', 'Dortmund', 'Monaco', 'Ajax'];
-        for (const t of testTeams) {
-          const idx = html.toLowerCase().indexOf(t.toLowerCase());
-          if (idx >= 0) {
-            const snippet = html.substring(Math.max(0, idx - 100), idx + 200).replace(/\n/g, ' ').replace(/\s+/g, ' ');
-            console.log(`  ${src.name} FOUND "${t}" at ${idx}: ...${snippet}...`);
-            break;
+        // Cloudflare 차단 확인
+        if (html.includes('Just a moment') || html.includes('Checking your browser')) {
+          console.log(`  ${src.name} WARNING: Cloudflare blocked! Skipping...`);
+          html = '';
+        } else {
+          // 팀명 존재 확인
+          const testTeams = ['Liverpool', 'Arsenal', 'Barcelona', 'Bayern', 'Juventus', 'Dortmund', 'Monaco', 'Ajax', 'PSV', 'Napoli'];
+          const foundTeam = testTeams.find(t => html.toLowerCase().includes(t.toLowerCase()));
+          if (foundTeam) {
+            console.log(`  ${src.name} OK: found team "${foundTeam}" in HTML`);
+          } else {
+            console.log(`  ${src.name} WARNING: no known team found in HTML!`);
+            console.log(`  ${src.name} HTML preview: ${html.substring(0, 300).replace(/\n/g, ' ')}`);
           }
         }
-        if (!testTeams.some(t => html.toLowerCase().includes(t.toLowerCase()))) {
-          console.log(`  ${src.name} WARNING: no known team found in HTML!`);
-          console.log(`  ${src.name} HTML preview: ${html.substring(0, 500).replace(/\n/g, ' ')}`);
-        }
-      }
       } catch (e) {
         console.log(`  ${src.name}: FAILED - ${e.message}`);
         continue;
@@ -220,6 +220,8 @@ async function doScrapeAndSave() {
         try { await browser.close(); } catch(e) {}
         browser = null;
       }
+
+      if (!html) continue;
 
       // 바로 파싱 & 저장
       let matched = 0, unmatched = 0;
@@ -248,8 +250,8 @@ async function doScrapeAndSave() {
       }
       console.log(`  ${src.name}: ${matched} matched, ${unmatched} unmatched`);
       
-      // predictz/forebet 디버그: 처음 5개 미매칭 팀명 로그
-      if ((src.name === 'predictz' || src.name === 'forebet') && unmatched > matched) {
+      // 디버그: 처음 5개 미매칭 팀명 로그
+      if (unmatched > matched && matched < 10) {
         let debugCount = 0;
         for (const match of matches || []) {
           if (debugCount >= 5) break;
@@ -290,8 +292,10 @@ app.get('/test/:site', auth, async (req, res) => {
   if (!urls[site]) return res.json({ error: 'Invalid site' });
 
   try {
-    const html = await getPage(urls[site], 'table');
-    res.json({ site, chars: html.length, preview: html.substring(0, 500), timestamp: new Date().toISOString() });
+    const extraWait = (site === 'forebet' || site === 'predictz') ? 15000 : 0;
+    const html = await getPage(urls[site], null, 60000, extraWait);
+    const blocked = html.includes('Just a moment') || html.includes('Checking your browser');
+    res.json({ site, chars: html.length, blocked, preview: html.substring(0, 500), timestamp: new Date().toISOString() });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -344,11 +348,11 @@ app.get('/debug/:site/:team', auth, async (req, res) => {
   if (!urls[site]) return res.json({ error: 'Invalid site' });
 
   try {
-    const html = await getPage(urls[site], 'table');
+    const extraWait = (site === 'forebet' || site === 'predictz') ? 15000 : 0;
+    const html = await getPage(urls[site], null, 60000, extraWait);
     const $ = cheerio.load(html);
     const found = [];
     
-    // HTML에서 팀명이 포함된 모든 요소 찾기
     $('tr, div, a, span, td').each((_, el) => {
       const text = $(el).text().trim();
       if (text.toLowerCase().includes(team.toLowerCase()) && text.length < 500) {
@@ -360,10 +364,11 @@ app.get('/debug/:site/:team', auth, async (req, res) => {
       }
     });
 
-    // 중복 제거 (가장 짧은 것 우선)
     const unique = found.sort((a, b) => a.text.length - b.text.length).slice(0, 10);
+    const blocked = html.includes('Just a moment') || html.includes('Checking your browser');
 
-    res.json({ site, team, total_found: found.length, matches: unique, html_length: html.length });
+    if (browser) { try { await browser.close(); } catch(e) {} browser = null; }
+    res.json({ site, team, total_found: found.length, blocked, matches: unique, html_length: html.length });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -381,7 +386,6 @@ function extractPrediction(html, homeEn, awayEn, source) {
       default: return null;
     }
   } catch (e) {
-    console.log(`  Parse error (${source}): ${e.message}`);
     return null;
   }
 }
@@ -391,17 +395,14 @@ function parseWindrawwin(html, homeEn, awayEn) {
   const $ = cheerio.load(html);
   let result = null;
 
-  // 각 경기 행을 찾기 - wtfixt 클래스가 있는 div
   $('div.wtfixt, div[class*="wtfixt"]').each((_, row) => {
     if (result) return;
     const text = $(row).text();
     if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
 
-    // 같은 부모(경기 행 컨테이너)에서 predscore 찾기
     const parent = $(row).parent();
     const grandparent = parent.parent();
     
-    // predscore를 여러 레벨에서 찾기
     let score = '';
     for (const container of [parent, grandparent]) {
       const sc = container.find('.predscore').first().text().trim();
@@ -411,7 +412,6 @@ function parseWindrawwin(html, homeEn, awayEn) {
     }
 
     if (!score) {
-      // 바로 다음 형제들에서 찾기
       const nextSiblings = $(row).nextAll();
       nextSiblings.each((_, sib) => {
         if (score) return;
@@ -432,7 +432,6 @@ function parseWindrawwin(html, homeEn, awayEn) {
       };
     }
 
-    // Home Win / Away Win / Draw fallback
     if (!result) {
       const allText = grandparent.text().toLowerCase();
       if (allText.includes('home win')) result = { predicted_score: null, predicted_result: '승' };
@@ -441,40 +440,49 @@ function parseWindrawwin(html, homeEn, awayEn) {
     }
   });
 
+  // Fallback: tr 기반
+  if (!result) {
+    $('tr').each((_, row) => {
+      if (result) return;
+      const text = $(row).text();
+      if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
+      $(row).find('td, span, a, div, strong').each((_, el) => {
+        if (result) return;
+        const t = $(el).text().trim();
+        const m = t.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
+        if (m) {
+          const hg = parseInt(m[1]), ag = parseInt(m[2]);
+          result = { predicted_score: `${hg}-${ag}`, predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무' };
+        }
+      });
+    });
+  }
+
   return result;
 }
 
-// predictz: div.pptr 구조 (실제 확인됨)
-// 홈팀과 원정팀이 별도의 div.pptr 행에 있을 수 있음
-// <div class="pptr ptcnt"><div class="pttd ptmobh">Liverpool</div>...
-// <div class="pptr ptcnt"><div class="pttd ptmoba">Brighton</div>...
+// predictz parser
 function parsePredictz(html, homeEn, awayEn) {
   const $ = cheerio.load(html);
   let result = null;
 
-  // 전략 1: 상위 컨테이너에서 두 팀 모두 포함하는 블록 찾기
-  // ptcon, ptdiv, table, div 등 다양한 컨테이너 시도
+  // 전략 1: 상위 컨테이너
   $('div[class*="pointed"], div[class*="ptcon"], div[class*="ptdiv"], div[class*="pttr"], .pointed, table').each((_, container) => {
     if (result) return;
     const text = $(container).text();
     if (text.length > 5000 || text.length < 10) return;
     if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
 
-    // 스코어 찾기
     $(container).find('div, span, a, td, strong').each((_, el) => {
       if (result) return;
       const t = $(el).text().trim();
       const m = t.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
       if (m) {
         const hg = parseInt(m[1]), ag = parseInt(m[2]);
-        result = {
-          predicted_score: `${hg}-${ag}`,
-          predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
-        };
+        result = { predicted_score: `${hg}-${ag}`, predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무' };
       }
     });
 
-    // 1X2 fallback
     if (!result) {
       const allText = $(container).text().toLowerCase();
       if (allText.includes('home win')) result = { predicted_score: null, predicted_result: '승' };
@@ -483,38 +491,26 @@ function parsePredictz(html, homeEn, awayEn) {
     }
   });
 
-  // 전략 2: pptr 행 중 홈팀이 있는 행의 부모/조부모에서 원정팀+스코어 찾기
+  // 전략 2: pptr 행
   if (!result) {
     $('div.pptr, .pptr').each((_, row) => {
       if (result) return;
       const text = $(row).text();
       if (!fuzzy(text, homeEn)) return;
 
-      // 이 행의 부모로 올라가며 원정팀 찾기
       let container = $(row).parent();
       for (let depth = 0; depth < 5 && container.length; depth++) {
         const containerText = container.text();
         if (fuzzy(containerText, awayEn)) {
-          // 스코어 찾기
           container.find('div, span, a, strong').each((_, el) => {
             if (result) return;
             const t = $(el).text().trim();
             const m = t.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
             if (m) {
               const hg = parseInt(m[1]), ag = parseInt(m[2]);
-              result = {
-                predicted_score: `${hg}-${ag}`,
-                predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
-              };
+              result = { predicted_score: `${hg}-${ag}`, predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무' };
             }
           });
-          
-          if (!result) {
-            const ct = containerText.toLowerCase();
-            if (ct.includes('home win')) result = { predicted_score: null, predicted_result: '승' };
-            else if (ct.includes('away win')) result = { predicted_score: null, predicted_result: '패' };
-            else if (ct.includes('draw')) result = { predicted_score: null, predicted_result: '무' };
-          }
           break;
         }
         container = container.parent();
@@ -522,89 +518,54 @@ function parsePredictz(html, homeEn, awayEn) {
     });
   }
 
-  // 전략 3: tr 기반 fallback
+  // 전략 3: tr fallback
   if (!result) {
     $('tr').each((_, row) => {
       if (result) return;
       const text = $(row).text();
       if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
-
       $(row).find('td, span, a, div, strong').each((_, el) => {
         if (result) return;
         const t = $(el).text().trim();
         const m = t.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
         if (m) {
           const hg = parseInt(m[1]), ag = parseInt(m[2]);
-          result = {
-            predicted_score: `${hg}-${ag}`,
-            predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
-          };
+          result = { predicted_score: `${hg}-${ag}`, predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무' };
         }
       });
     });
   }
 
-  // 전략 4: 아무 요소에서든 두 팀명이 가까이 있는 곳 찾기
+  // 전략 4: 원시 HTML 검색
   if (!result) {
-    const lowerHtml = html.toLowerCase();
-    const homeKey = homeEn.toLowerCase().split(/\s+/).find(w => w.length >= 4) || homeEn.toLowerCase();
-    const awayKey = awayEn.toLowerCase().split(/\s+/).find(w => w.length >= 4) || awayEn.toLowerCase();
-    
-    const homeIdx = lowerHtml.indexOf(homeKey);
-    if (homeIdx >= 0) {
-      // 홈팀 위치에서 ±2000자 내에 원정팀이 있는지
-      const region = lowerHtml.substring(Math.max(0, homeIdx - 500), homeIdx + 2000);
-      if (region.includes(awayKey)) {
-        // 해당 영역의 HTML에서 스코어 패턴 찾기
-        const regionHtml = html.substring(Math.max(0, homeIdx - 500), homeIdx + 2000);
-        const scoreMatch = regionHtml.match(/(\d+)\s*[-–:]\s*(\d+)/);
-        if (scoreMatch) {
-          const hg = parseInt(scoreMatch[1]), ag = parseInt(scoreMatch[2]);
-          if (hg < 20 && ag < 20) { // 합리적인 스코어
-            result = {
-              predicted_score: `${hg}-${ag}`,
-              predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
-            };
-          }
-        }
-      }
-    }
+    result = rawHtmlSearch(html, homeEn, awayEn);
   }
 
   return result;
 }
 
-// forebet: 실제 HTML 구조 확인됨
-// <div class="tnms"><span class="homeTeam">...</span><span class="awayTeam">...</span></div>
-// 스코어: <div class="rcnt"><span class="ex_sc">1 - 0</span></div> 또는 확률 기반
+// forebet parser
 function parseForebet(html, homeEn, awayEn) {
   const $ = cheerio.load(html);
   let result = null;
 
-  // 전략 1: .rcnt (경기 행 컨테이너) 에서 homeTeam/awayTeam 검색
+  // 전략 1: .rcnt
   $('.rcnt').each((_, row) => {
     if (result) return;
-    
-    // homeTeam, awayTeam 텍스트 확인
     const homeText = $(row).find('.homeTeam').text().trim();
     const awayText = $(row).find('.awayTeam').text().trim();
     
     if (homeText && awayText && fuzzy(homeText, homeEn) && fuzzy(awayText, awayEn)) {
-      // 스코어 찾기
       $(row).find('[class*="ex_sc"], [class*="score"], .foremark').each((_, el) => {
         if (result) return;
         const t = $(el).text().trim();
         const m = t.match(/(\d+)\s*[-–:]\s*(\d+)/);
         if (m) {
           const hg = parseInt(m[1]), ag = parseInt(m[2]);
-          result = {
-            predicted_score: `${hg}-${ag}`,
-            predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
-          };
+          result = { predicted_score: `${hg}-${ag}`, predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무' };
         }
       });
 
-      // 1X2 확률 fallback
       if (!result) {
         const probs = [];
         $(row).find('[class*="fprc"], [class*="prob"]').each((_, el) => {
@@ -619,7 +580,6 @@ function parseForebet(html, homeEn, awayEn) {
         }
       }
 
-      // 1/X/2 팁 fallback
       if (!result) {
         const tipText = $(row).text();
         const tip = tipText.match(/(?:tip|pred)[:\s]*([1X2])/i);
@@ -632,17 +592,15 @@ function parseForebet(html, homeEn, awayEn) {
     }
   });
 
-  // 전략 2: .tnms 블록에서 검색 (실제 확인된 구조)
+  // 전략 2: .tnms 블록
   if (!result) {
     $('.tnms').each((_, block) => {
       if (result) return;
       const homeText = $(block).find('.homeTeam').text().trim();
       const awayText = $(block).find('.awayTeam').text().trim();
-      
       if (!homeText || !awayText) return;
       if (!fuzzy(homeText, homeEn) || !fuzzy(awayText, awayEn)) return;
       
-      // .tnms의 부모/형제에서 스코어 찾기
       const parent = $(block).parent();
       const gp = parent.parent();
       
@@ -654,14 +612,10 @@ function parseForebet(html, homeEn, awayEn) {
           const m = t.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
           if (m) {
             const hg = parseInt(m[1]), ag = parseInt(m[2]);
-            result = {
-              predicted_score: `${hg}-${ag}`,
-              predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
-            };
+            result = { predicted_score: `${hg}-${ag}`, predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무' };
           }
         });
         
-        // 확률 fallback
         if (!result) {
           const probs = [];
           container.find('[class*="fprc"], [class*="prob"]').each((_, el) => {
@@ -679,35 +633,15 @@ function parseForebet(html, homeEn, awayEn) {
     });
   }
 
-  // 전략 3: 전체 텍스트 검색 fallback
+  // 전략 3: 원시 HTML 검색
   if (!result) {
-    const lowerHtml = html.toLowerCase();
-    const homeKey = homeEn.toLowerCase().split(/\s+/).find(w => w.length >= 4) || homeEn.toLowerCase();
-    const awayKey = awayEn.toLowerCase().split(/\s+/).find(w => w.length >= 4) || awayEn.toLowerCase();
-    
-    const homeIdx = lowerHtml.indexOf(homeKey);
-    if (homeIdx >= 0) {
-      const region = lowerHtml.substring(Math.max(0, homeIdx - 500), homeIdx + 2000);
-      if (region.includes(awayKey)) {
-        const regionHtml = html.substring(Math.max(0, homeIdx - 500), homeIdx + 2000);
-        const scoreMatch = regionHtml.match(/(\d+)\s*[-–:]\s*(\d+)/);
-        if (scoreMatch) {
-          const hg = parseInt(scoreMatch[1]), ag = parseInt(scoreMatch[2]);
-          if (hg < 20 && ag < 20) {
-            result = {
-              predicted_score: `${hg}-${ag}`,
-              predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
-            };
-          }
-        }
-      }
-    }
+    result = rawHtmlSearch(html, homeEn, awayEn);
   }
 
   return result;
 }
 
-// vitibet: table tr 구조
+// vitibet parser
 function parseVitibet(html, homeEn, awayEn) {
   const $ = cheerio.load(html);
   let result = null;
@@ -717,21 +651,16 @@ function parseVitibet(html, homeEn, awayEn) {
     const text = $(row).text();
     if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
 
-    // 스코어 패턴
     $(row).find('td, span, a').each((_, el) => {
       if (result) return;
       const t = $(el).text().trim();
       const m = t.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
       if (m) {
         const hg = parseInt(m[1]), ag = parseInt(m[2]);
-        result = {
-          predicted_score: `${hg}-${ag}`,
-          predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
-        };
+        result = { predicted_score: `${hg}-${ag}`, predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무' };
       }
     });
 
-    // 1X2 fallback
     if (!result) {
       $(row).find('td, span').each((_, el) => {
         if (result) return;
@@ -743,16 +672,290 @@ function parseVitibet(html, homeEn, awayEn) {
     }
   });
 
+  // Fallback: 원시 HTML 검색
+  if (!result) {
+    result = rawHtmlSearch(html, homeEn, awayEn);
+  }
+
   return result;
 }
 
+// 원시 HTML 검색 (공통 fallback)
+function rawHtmlSearch(html, homeEn, awayEn) {
+  const lowerHtml = html.toLowerCase();
+  // 모든 별칭에 대해 검색
+  const homeAliases = getAliases(homeEn);
+  const awayAliases = getAliases(awayEn);
+  
+  for (const homeAlias of homeAliases) {
+    const homeKey = homeAlias.toLowerCase();
+    const homeIdx = lowerHtml.indexOf(homeKey);
+    if (homeIdx < 0) continue;
+    
+    for (const awayAlias of awayAliases) {
+      const awayKey = awayAlias.toLowerCase();
+      const region = lowerHtml.substring(Math.max(0, homeIdx - 500), homeIdx + 2000);
+      if (!region.includes(awayKey)) continue;
+      
+      const regionHtml = html.substring(Math.max(0, homeIdx - 500), homeIdx + 2000);
+      const scoreMatch = regionHtml.match(/(\d+)\s*[-–:]\s*(\d+)/);
+      if (scoreMatch) {
+        const hg = parseInt(scoreMatch[1]), ag = parseInt(scoreMatch[2]);
+        if (hg < 20 && ag < 20) {
+          return {
+            predicted_score: `${hg}-${ag}`,
+            predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
+          };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// ====== 영문 팀명 별칭 매핑 ======
+// DB에 저장된 영문명 → 해외사이트에서 사용할 수 있는 다양한 표기
+const ALIAS_MAP = {
+  // A-League
+  'Western Sydney': ['Western Sydney', 'WS Wanderers', 'Western Sydney Wanderers', 'W. Sydney'],
+  'Wellington Phoenix': ['Wellington Phoenix', 'Wellington', 'Well. Phoenix'],
+  'Melbourne Victory': ['Melbourne Victory', 'Melb Victory', 'Melbourne Vic'],
+  'Brisbane Roar': ['Brisbane Roar', 'Brisbane'],
+  'Sydney FC': ['Sydney FC', 'Sydney'],
+  'Adelaide United': ['Adelaide United', 'Adelaide Utd', 'Adelaide'],
+  'Perth Glory': ['Perth Glory', 'Perth'],
+  'Newcastle Jets': ['Newcastle Jets', 'Newc. Jets'],
+  'Central Coast Mariners': ['Central Coast Mariners', 'Central Coast', 'CC Mariners'],
+  'Macarthur FC': ['Macarthur FC', 'Macarthur'],
+  'Melbourne City': ['Melbourne City', 'Melb City'],
+  'Auckland FC': ['Auckland FC', 'Auckland'],
+  
+  // J-League
+  'Vissel Kobe': ['Vissel Kobe', 'Kobe'],
+  'V-Varen Nagasaki': ['V-Varen Nagasaki', 'V-Varen', 'Nagasaki'],
+  'Kashima Antlers': ['Kashima Antlers', 'Kashima'],
+  'Yokohama F. Marinos': ['Yokohama F. Marinos', 'Yokohama FM', 'Yokohama Marinos', 'Yokohama F Marinos', 'Yokohama F.Marinos', 'Y. Marinos'],
+  'FC Tokyo': ['FC Tokyo', 'Tokyo'],
+  'Urawa Reds': ['Urawa Reds', 'Urawa Red Diamonds', 'Urawa'],
+  'Machida Zelvia': ['Machida Zelvia', 'Machida'],
+  'Mito HollyHock': ['Mito HollyHock', 'Mito Hollyhock', 'Mito'],
+  'Shimizu S-Pulse': ['Shimizu S-Pulse', 'Shimizu S Pulse', 'Shimizu'],
+  'Kyoto Sanga': ['Kyoto Sanga', 'Kyoto Sanga FC', 'Kyoto'],
+  'Sanfrecce Hiroshima': ['Sanfrecce Hiroshima', 'Hiroshima', 'Sanfrecce'],
+  'Fagiano Okayama': ['Fagiano Okayama', 'Okayama'],
+  'Yokohama FC': ['Yokohama FC'],
+  'Vegalta Sendai': ['Vegalta Sendai', 'Sendai'],
+  'Omiya Ardija': ['Omiya Ardija', 'Omiya'],
+  'Consadole Sapporo': ['Consadole Sapporo', 'Sapporo', 'Hokkaido Consadole'],
+  'Kashiwa Reysol': ['Kashiwa Reysol', 'Kashiwa'],
+  'Tokyo Verdy': ['Tokyo Verdy', 'Verdy'],
+  'Tochigi SC': ['Tochigi SC', 'Tochigi'],
+  'Blaublitz Akita': ['Blaublitz Akita', 'Akita'],
+  'Tokushima Vortis': ['Tokushima Vortis', 'Tokushima'],
+  'Albirex Niigata': ['Albirex Niigata', 'Niigata', 'Albirex'],
+  'Avispa Fukuoka': ['Avispa Fukuoka', 'Fukuoka'],
+  'Cerezo Osaka': ['Cerezo Osaka', 'C. Osaka', 'C Osaka'],
+  'Gamba Osaka': ['Gamba Osaka', 'G. Osaka', 'G Osaka'],
+  'Nagoya Grampus': ['Nagoya Grampus', 'Nagoya'],
+  'JEF United': ['JEF United', 'JEF United Chiba', 'JEF Utd'],
+  'Kawasaki Frontale': ['Kawasaki Frontale', 'Kawasaki'],
+  'Ventforet Kofu': ['Ventforet Kofu', 'Kofu'],
+  'Jubilo Iwata': ['Jubilo Iwata', 'Iwata', 'Jubilo'],
+  'Sagan Tosu': ['Sagan Tosu', 'Tosu'],
+  
+  // Premier League
+  'Liverpool': ['Liverpool'],
+  'Brighton': ['Brighton', 'Brighton & Hove', 'Brighton Hove'],
+  'Aston Villa': ['Aston Villa', 'A. Villa'],
+  'Newcastle United': ['Newcastle United', 'Newcastle Utd', 'Newcastle'],
+  'Manchester City': ['Manchester City', 'Man City', 'Man. City'],
+  'Arsenal': ['Arsenal'],
+  'Chelsea': ['Chelsea'],
+  'Manchester United': ['Manchester United', 'Man United', 'Man. United', 'Man Utd'],
+  'Tottenham': ['Tottenham', 'Tottenham Hotspur', 'Spurs'],
+  'Everton': ['Everton'],
+  'West Ham': ['West Ham', 'West Ham United', 'West Ham Utd'],
+  'Fulham': ['Fulham'],
+  'Bournemouth': ['Bournemouth', 'AFC Bournemouth'],
+  'Wolverhampton': ['Wolverhampton', 'Wolverhampton Wanderers', 'Wolves'],
+  'Crystal Palace': ['Crystal Palace', 'C. Palace'],
+  'Nottingham Forest': ['Nottingham Forest', 'Nott. Forest', 'Nottingham', 'Nott\'m Forest'],
+  'Brentford': ['Brentford'],
+  'Southampton': ['Southampton'],
+  'Leicester City': ['Leicester City', 'Leicester'],
+  'Ipswich Town': ['Ipswich Town', 'Ipswich'],
+  'Leeds United': ['Leeds United', 'Leeds Utd', 'Leeds'],
+  'Sunderland': ['Sunderland'],
+  'Burnley': ['Burnley'],
+  
+  // Championship
+  'Hull City': ['Hull City', 'Hull'],
+  'Wrexham': ['Wrexham'],
+  'Derby County': ['Derby County', 'Derby'],
+  'Swansea City': ['Swansea City', 'Swansea'],
+  'Portsmouth': ['Portsmouth'],
+  'Sheffield United': ['Sheffield United', 'Sheffield Utd', 'Sheff Utd', 'Sheff. United'],
+  'Preston': ['Preston', 'Preston North End'],
+  'Watford': ['Watford'],
+  'QPR': ['QPR', 'Queens Park Rangers'],
+  'Blackburn': ['Blackburn', 'Blackburn Rovers'],
+  'Sheffield Wednesday': ['Sheffield Wednesday', 'Sheffield Wed', 'Sheff Wed', 'Sheff. Wednesday'],
+  'Millwall': ['Millwall'],
+  'Norwich City': ['Norwich City', 'Norwich'],
+  'West Brom': ['West Brom', 'West Bromwich', 'WBA', 'West Bromwich Albion'],
+  'Birmingham City': ['Birmingham City', 'Birmingham'],
+  'Oxford United': ['Oxford United', 'Oxford Utd', 'Oxford'],
+  'Stoke City': ['Stoke City', 'Stoke'],
+  'Cardiff City': ['Cardiff City', 'Cardiff'],
+  'Middlesbrough': ['Middlesbrough'],
+  'Coventry City': ['Coventry City', 'Coventry'],
+  'Luton Town': ['Luton Town', 'Luton'],
+  'Plymouth Argyle': ['Plymouth Argyle', 'Plymouth'],
+  'Bristol City': ['Bristol City', 'Bristol'],
+  
+  // La Liga
+  'Espanyol': ['Espanyol', 'RCD Espanyol'],
+  'Celta Vigo': ['Celta Vigo', 'Celta', 'RC Celta'],
+  'Getafe': ['Getafe'],
+  'Villarreal': ['Villarreal'],
+  'Sevilla': ['Sevilla', 'Sevilla FC'],
+  'Alaves': ['Alaves', 'Deportivo Alaves', 'Alavés'],
+  'Real Madrid': ['Real Madrid', 'R. Madrid'],
+  'Real Sociedad': ['Real Sociedad', 'R. Sociedad', 'Sociedad'],
+  'Rayo Vallecano': ['Rayo Vallecano', 'Rayo'],
+  'Atletico Madrid': ['Atletico Madrid', 'Atl. Madrid', 'Atletico', 'At. Madrid', 'Atl Madrid'],
+  'Mallorca': ['Mallorca', 'RCD Mallorca'],
+  'Real Betis': ['Real Betis', 'Betis', 'R. Betis'],
+  'Barcelona': ['Barcelona', 'FC Barcelona'],
+  'Valencia': ['Valencia', 'Valencia CF'],
+  'Osasuna': ['Osasuna', 'CA Osasuna'],
+  'Girona': ['Girona', 'Girona FC'],
+  'Las Palmas': ['Las Palmas', 'UD Las Palmas'],
+  'Leganes': ['Leganes', 'CD Leganes', 'Leganés'],
+  'Real Valladolid': ['Real Valladolid', 'Valladolid', 'R. Valladolid'],
+  'Levante': ['Levante', 'Levante UD'],
+  'Real Oviedo': ['Real Oviedo', 'Oviedo', 'R. Oviedo'],
+  'Athletic Bilbao': ['Athletic Bilbao', 'Ath Bilbao', 'Ath. Bilbao', 'Athletic Club', 'Athletic'],
+  
+  // Serie A
+  'AC Milan': ['AC Milan', 'Milan'],
+  'Como': ['Como', 'Como 1907'],
+  'Fiorentina': ['Fiorentina', 'ACF Fiorentina'],
+  'Lazio': ['Lazio', 'SS Lazio'],
+  'Atalanta': ['Atalanta'],
+  'Inter Milan': ['Inter Milan', 'Inter', 'Internazionale', 'FC Inter'],
+  'Juventus': ['Juventus', 'Juve'],
+  'Udinese': ['Udinese'],
+  'Genoa': ['Genoa'],
+  'Parma': ['Parma'],
+  'Hellas Verona': ['Hellas Verona', 'Verona', 'H. Verona'],
+  'Torino': ['Torino'],
+  'Bologna': ['Bologna'],
+  'Napoli': ['Napoli', 'SSC Napoli'],
+  'AS Roma': ['AS Roma', 'Roma'],
+  'Empoli': ['Empoli'],
+  'Cagliari': ['Cagliari'],
+  'Lecce': ['Lecce'],
+  'Monza': ['Monza'],
+  'Venezia': ['Venezia'],
+  
+  // Bundesliga
+  'Dortmund': ['Dortmund', 'Borussia Dortmund', 'B. Dortmund'],
+  'Mainz': ['Mainz', 'Mainz 05', 'FSV Mainz'],
+  'Bayer Leverkusen': ['Bayer Leverkusen', 'Leverkusen', 'B. Leverkusen'],
+  'St. Pauli': ['St. Pauli', 'FC St. Pauli', 'Sankt Pauli'],
+  'Eintracht Frankfurt': ['Eintracht Frankfurt', 'E. Frankfurt', 'Frankfurt'],
+  'Monchengladbach': ['Monchengladbach', 'B. Monchengladbach', 'Borussia M\'gladbach', 'Gladbach', 'M\'gladbach', 'Mönchengladbach'],
+  'Werder Bremen': ['Werder Bremen', 'Bremen', 'W. Bremen'],
+  'Bayern Munich': ['Bayern Munich', 'Bayern', 'FC Bayern', 'Bayern München'],
+  'Hoffenheim': ['Hoffenheim', 'TSG Hoffenheim'],
+  'Freiburg': ['Freiburg', 'SC Freiburg'],
+  'Stuttgart': ['Stuttgart', 'VfB Stuttgart'],
+  'Koln': ['Koln', 'FC Koln', 'Köln', 'FC Köln', 'Cologne'],
+  'Augsburg': ['Augsburg', 'FC Augsburg'],
+  'Heidenheim': ['Heidenheim', 'FC Heidenheim'],
+  'RB Leipzig': ['RB Leipzig', 'Leipzig', 'Red Bull Leipzig'],
+  'Wolfsburg': ['Wolfsburg', 'VfL Wolfsburg'],
+  'Bochum': ['Bochum', 'VfL Bochum'],
+  'Hamburger SV': ['Hamburger SV', 'Hamburg', 'HSV'],
+  'Union Berlin': ['Union Berlin', 'FC Union Berlin'],
+  
+  // Ligue 1
+  'Rennes': ['Rennes', 'Stade Rennais'],
+  'PSG': ['PSG', 'Paris Saint-Germain', 'Paris Saint Germain', 'Paris SG'],
+  'Monaco': ['Monaco', 'AS Monaco'],
+  'Nantes': ['Nantes', 'FC Nantes'],
+  'Marseille': ['Marseille', 'Olympique Marseille', 'OM', 'O. Marseille'],
+  'Strasbourg': ['Strasbourg', 'RC Strasbourg'],
+  'Lille': ['Lille', 'LOSC Lille', 'LOSC'],
+  'Brest': ['Brest', 'Stade Brestois'],
+  'Le Havre': ['Le Havre'],
+  'Toulouse': ['Toulouse', 'Toulouse FC'],
+  'Auxerre': ['Auxerre', 'AJ Auxerre'],
+  'Lyon': ['Lyon', 'Olympique Lyon', 'Olympique Lyonnais', 'OL'],
+  'Nice': ['Nice', 'OGC Nice'],
+  'Lens': ['Lens', 'RC Lens'],
+  'Montpellier': ['Montpellier', 'Montpellier HSC'],
+  'Angers SCO': ['Angers SCO', 'Angers'],
+  'Saint-Etienne': ['Saint-Etienne', 'St Etienne', 'AS Saint-Etienne', 'St. Etienne'],
+  
+  // Eredivisie
+  'Feyenoord': ['Feyenoord'],
+  'PSV': ['PSV', 'PSV Eindhoven'],
+  'Heracles': ['Heracles', 'Heracles Almelo'],
+  'NAC Breda': ['NAC Breda', 'NAC'],
+  'AZ Alkmaar': ['AZ Alkmaar', 'AZ'],
+  'Ajax': ['Ajax', 'AFC Ajax'],
+  'Fortuna Sittard': ['Fortuna Sittard', 'Sittard'],
+  'Groningen': ['Groningen', 'FC Groningen'],
+  'Utrecht': ['Utrecht', 'FC Utrecht'],
+  'Go Ahead Eagles': ['Go Ahead Eagles', 'Go Ahead'],
+  'Heerenveen': ['Heerenveen', 'SC Heerenveen'],
+  'PEC Zwolle': ['PEC Zwolle', 'Zwolle'],
+  'Sparta Rotterdam': ['Sparta Rotterdam', 'Sparta R.'],
+  'NEC Nijmegen': ['NEC Nijmegen', 'NEC'],
+  'Twente': ['Twente', 'FC Twente'],
+  'Willem II': ['Willem II'],
+  'Almere City': ['Almere City', 'Almere'],
+};
+
+// 팀명에 대한 모든 별칭 가져오기
+function getAliases(teamEn) {
+  if (!teamEn) return [];
+  // ALIAS_MAP에서 직접 찾기
+  if (ALIAS_MAP[teamEn]) return ALIAS_MAP[teamEn];
+  // 값에서 찾기 (이미 별칭인 경우)
+  for (const [key, aliases] of Object.entries(ALIAS_MAP)) {
+    if (aliases.some(a => a.toLowerCase() === teamEn.toLowerCase())) {
+      return aliases;
+    }
+  }
+  // 없으면 원본만 반환
+  return [teamEn];
+}
+
+// ====== 향상된 fuzzy 매칭 ======
 function fuzzy(text, team) {
   if (!text || !team) return false;
   const t = text.toLowerCase();
+  
+  // 1. 원본 팀명으로 매칭
   const parts = team.toLowerCase().split(/\s+/);
   if (parts.every(p => t.includes(p))) return true;
   if (parts[0].length >= 4 && t.includes(parts[0])) return true;
   if (parts.length > 1 && parts[1].length >= 4 && t.includes(parts[1])) return true;
+  
+  // 2. 별칭으로 매칭
+  const aliases = getAliases(team);
+  for (const alias of aliases) {
+    if (alias === team) continue; // 원본은 이미 체크함
+    const aliasParts = alias.toLowerCase().split(/\s+/);
+    if (aliasParts.every(p => t.includes(p))) return true;
+    // 단일 단어 별칭 (예: 'Kobe', 'Bayern')은 4자 이상이면 매칭
+    if (aliasParts.length === 1 && aliasParts[0].length >= 4 && t.includes(aliasParts[0])) return true;
+    if (aliasParts[0].length >= 4 && t.includes(aliasParts[0])) return true;
+  }
+  
   return false;
 }
 
@@ -769,20 +972,18 @@ app.get('/html-sample/:site/:team', auth, async (req, res) => {
   if (!urls[site]) return res.json({ error: 'Invalid site' });
 
   try {
-    const html = await getPage(urls[site], null);
+    const extraWait = (site === 'forebet' || site === 'predictz') ? 15000 : 0;
+    const html = await getPage(urls[site], null, 60000, extraWait);
     
-    // 팀명이 포함된 부분 찾기
     const idx = html.toLowerCase().indexOf(team.toLowerCase());
     const samples = [];
     
     if (idx >= 0) {
-      // 팀명 주변 500자
       const start = Math.max(0, idx - 200);
       const end = Math.min(html.length, idx + 300);
       samples.push(html.substring(start, end));
     }
     
-    // cheerio로 팀명 포함된 행 찾기
     const $ = cheerio.load(html);
     const rows = [];
     $('tr, .rcnt, div[class*="match"], div[class*="row"]').each((_, el) => {
@@ -797,7 +998,6 @@ app.get('/html-sample/:site/:team', auth, async (req, res) => {
       }
     });
 
-    // 브라우저 닫기
     if (browser) { try { await browser.close(); } catch(e) {} browser = null; }
 
     res.json({ 
@@ -817,6 +1017,9 @@ const TEAM_MAP = {
   '브리로어': 'Brisbane Roar', '시드니FC': 'Sydney FC', '애들유나': 'Adelaide United',
   '퍼스글로': 'Perth Glory', '뉴캐제츠': 'Newcastle Jets', '센트마리': 'Central Coast Mariners',
   '맥아서': 'Macarthur FC', '멜버시티': 'Melbourne City', '오클랜드': 'Auckland FC',
+  '웰링턴': 'Wellington Phoenix', '멜번빅토': 'Melbourne Victory', '멜번시티': 'Melbourne City',
+  '센트럴코': 'Central Coast Mariners', '브리즈번': 'Brisbane Roar', '애들레유': 'Adelaide United',
+  '매콰리유': 'Macarthur FC', '웨스시드': 'Western Sydney',
   // J리그 / J2리그
   '비셀고베': 'Vissel Kobe', 'V바렌나': 'V-Varen Nagasaki', '가시마': 'Kashima Antlers',
   '요코마리': 'Yokohama F. Marinos', 'FC도쿄': 'FC Tokyo', '우라와': 'Urawa Reds',
@@ -831,6 +1034,13 @@ const TEAM_MAP = {
   '사간도스': 'Sagan Tosu', '나가사키': 'V-Varen Nagasaki', '히로시마': 'Sanfrecce Hiroshima',
   '세레소': 'Cerezo Osaka', '간바': 'Gamba Osaka', '우라와레': 'Urawa Reds',
   '삿포로콘': 'Consadole Sapporo', '요코하마': 'Yokohama F. Marinos',
+  '요코FM': 'Yokohama F. Marinos', '감바오사': 'Gamba Osaka',
+  // J리그 추가
+  '토쿄V': 'Tokyo Verdy', '오이타': 'Oita Trinita', '에히메': 'Ehime FC',
+  '야마가타': 'Montedio Yamagata', '로아소쿠': 'Roasso Kumamoto', '이와키': 'Iwaki FC',
+  '레노파야': 'Renofa Yamaguchi', '반포레': 'Ventforet Kofu', '자스파쿠': 'Zweigen Kanazawa',
+  '가이나레': 'Gainare Tottori', '후지에다': 'Fujieda MYFC', '카타프로': 'Kataller Toyama',
+  '오미야아': 'Omiya Ardija', '츠에겐가': 'Zweigen Kanazawa',
   // Premier League
   '리버풀': 'Liverpool', '브라이턴': 'Brighton', 'A빌라': 'Aston Villa', '뉴캐슬U': 'Newcastle United',
   '맨시티': 'Manchester City', '아스널': 'Arsenal', '첼시': 'Chelsea', '맨유': 'Manchester United',
@@ -853,8 +1063,9 @@ const TEAM_MAP = {
   '라요': 'Rayo Vallecano', 'AT마드': 'Atletico Madrid', '마요르카': 'Mallorca', '베티스': 'Real Betis',
   '바르셀로': 'Barcelona', '발렌시아': 'Valencia', '오사수나': 'Osasuna', '지로나': 'Girona',
   '라스팔마': 'Las Palmas', '레가네스': 'Leganes', '발라돌리': 'Real Valladolid',
+  '빌바오': 'Athletic Bilbao', 'AT마드리': 'Atletico Madrid',
   // La Liga 2
-  '레반테': 'Levante', '오비에도': 'Real Oviedo', '빌바오': 'Athletic Bilbao',
+  '레반테': 'Levante', '오비에도': 'Real Oviedo',
   // Serie A
   '피사SC': 'Pisa', 'AC밀란': 'AC Milan', '코모1907': 'Como', '피오렌티': 'Fiorentina',
   '라치오': 'Lazio', '아탈란타': 'Atalanta', '인테르': 'Inter Milan', '유벤투스': 'Juventus',
@@ -862,6 +1073,7 @@ const TEAM_MAP = {
   '파르마': 'Parma', '엘라스': 'Hellas Verona', '토리노': 'Torino', '볼로나': 'Bologna',
   '나폴리': 'Napoli', 'AS로마': 'AS Roma', '엠폴리': 'Empoli', '카글리아': 'Cagliari',
   '레체': 'Lecce', '몬자': 'Monza', '베네치아': 'Venezia', '사레르니': 'Salernitana',
+  '볼로냐': 'Bologna',
   // Bundesliga
   '도르트문': 'Dortmund', '마인츠05': 'Mainz', '레버쿠젠': 'Bayer Leverkusen', '장크트파': 'St. Pauli',
   '프랑크푸': 'Eintracht Frankfurt', '뮌헨글라': 'Monchengladbach', '브레멘': 'Werder Bremen',
@@ -870,13 +1082,18 @@ const TEAM_MAP = {
   '라이프치': 'RB Leipzig', '볼프스부': 'Wolfsburg', '보훔': 'Bochum', '볼프스': 'Wolfsburg',
   '다름슈타': 'Darmstadt',
   // Bundesliga 2
-  '함부르크': 'Hamburger SV', 'U베를린': 'Union Berlin',
+  '함부르크': 'Hamburger SV', 'U베를린': 'Union Berlin', '키엘': 'Holstein Kiel',
+  '카이저슬': 'Kaiserslautern', '뒤셀도르': 'Fortuna Dusseldorf', '뉘른베르': 'Nurnberg',
+  '샬케04': 'Schalke 04', '파더보른': 'Paderborn', '헤르타B': 'Hertha Berlin',
+  '그로이터': 'Greuther Furth', '마그데부': 'Magdeburg', '하노버96': 'Hannover 96',
+  '브라운슈': 'Braunschweig', '엘베어슈': 'Elversberg', '카를스루': 'Karlsruher',
   // Ligue 1
   '스타드렌': 'Rennes', 'PSG': 'PSG', 'AS모나코': 'Monaco', '낭트': 'Nantes',
   '마르세유': 'Marseille', 'RC스트라': 'Strasbourg', '릴OSC': 'Lille', '브레스투': 'Brest',
   '르아브르': 'Le Havre', '툴루즈': 'Toulouse', '메스': 'Metz', '오세르': 'Auxerre',
   '리옹': 'Lyon', 'OGC니스': 'Nice', '랑스': 'Lens', '몽펠리에': 'Montpellier',
-  '클레르몽': 'Clermont', '로리앙': 'Lorient',
+  '클레르몽': 'Clermont', '로리앙': 'Lorient', '생테티엔': 'Saint-Etienne',
+  '앙제': 'Angers SCO', '렌느': 'Rennes',
   // Ligue 2
   '파리FC': 'Paris FC', '앙제SCO': 'Angers SCO',
   // Eredivisie
@@ -885,7 +1102,8 @@ const TEAM_MAP = {
   '흐로닝언': 'Groningen', '위트레흐': 'Utrecht', '페예노르': 'Feyenoord', '고어헤드': 'Go Ahead Eagles',
   '헤이렌베': 'Heerenveen', '즈볼러': 'PEC Zwolle', '스파로테': 'Sparta Rotterdam',
   '네이메헌': 'NEC Nijmegen', '트벤테': 'Twente', '텔스타': 'Telstar',
-  // 한국 리그명 매핑
+  '빌렘II': 'Willem II', '알메르시': 'Almere City',
+  // 기타
   '엘체': 'Elche', '오사수니': 'Osasuna',
 };
 
@@ -898,8 +1116,9 @@ const LEAGUE_MAP = {
   '분데스리': 'Bundesliga', '분데스2': 'Bundesliga2',
   '프리그1': 'Ligue1', '리그1': 'Ligue1', '리그2': 'Ligue2', '프리그2': 'Ligue2',
   '에레디비': 'Eredivisie', '에레디2': 'Eredivisie2',
-  // 축약형
-  'A리그': 'A-League',
+  'UEFA유로': 'UEFAEuropa', 'UEFA챔': 'UEFAChampions',
+  'FA컵': 'FACup', '코파델레': 'CopaDelRey', '국왕컵': 'CopaDelRey',
+  'DFB포칼': 'DFBPokal',
 };
 
 // ====== FETCH MATCHES FROM WISETOTO ======
@@ -921,7 +1140,7 @@ async function doFetchMatches() {
 
     const page = await b.newPage();
     await page.setViewport({ width: 1280, height: 720 });
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
 
     // 1. 와이즈토토 메인 → 프로토 승부식 페이지
     console.log('  Loading wisetoto...');
@@ -950,12 +1169,10 @@ async function doFetchMatches() {
     // 4. 회차 정보 파싱
     const $ = cheerio.load(html);
     
-    // 회차 번호 추출
     let roundYear = new Date().getFullYear().toString();
     let roundNumber = null;
     
-    // "2026년도" / "20회차" 텍스트에서 추출
-    const yearText = $('select, .year, [class*="year"]').text() || html;
+    // "2026년도" / "22회차" 텍스트에서 추출
     const roundMatch = html.match(/(\d{4})년도.*?(\d+)회차/s) || html.match(/game_year=(\d{4})&game_round=(\d+)/);
     if (roundMatch) {
       roundYear = roundMatch[1];
@@ -971,9 +1188,15 @@ async function doFetchMatches() {
       });
     }
     
+    // fallback 2: "22회차 발매중" 같은 텍스트에서 추출
+    if (!roundNumber) {
+      const saleMatch = html.match(/승부식\s*(\d+)회차\s*발매/);
+      if (saleMatch) roundNumber = parseInt(saleMatch[1]);
+    }
+    
     console.log(`  Round: ${roundYear}-${roundNumber || '?'}`);
 
-    // 5. 경기 목록 파싱 - 테이블 행에서 추출
+    // 5. 경기 목록 파싱
     const matches = [];
     
     $('tr').each((_, row) => {
@@ -986,22 +1209,18 @@ async function doFetchMatches() {
       
       // 유형 칸 확인 - 비어있으면 일반 승무패
       const typeCell = $(cells[3]).text().trim();
-      if (typeCell && typeCell !== '') return; // H, U, SUM 등은 스킵
+      if (typeCell && typeCell !== '') return;
       
       const league = $(cells[2]).text().trim().replace(/[⚽🏀🏐⚾]/g, '').trim();
-      const matchInfo = $(cells[4]).text().trim(); // "홈팀 vs 원정팀" 또는 "홈팀 N : N 원정팀"
+      const matchInfo = $(cells[4]).text().trim();
       
-      // 홈팀, 원정팀 추출
-      // 패턴: "홈팀 N : N 원정팀" 또는 "홈팀 : 원정팀"
       let homeKr = '', awayKr = '';
       
-      // 링크에서 팀명 추출 시도
       const links = $(cells[4]).find('a');
       if (links.length >= 2) {
         homeKr = $(links[0]).text().trim();
         awayKr = $(links[1]).text().trim();
       } else {
-        // 텍스트에서 추출: "홈팀 N : N 원정팀" or "홈팀 : 원정팀"
         const cleaned = matchInfo.replace(/\d+\s*:\s*\d+/, ':').replace(/\s+/g, ' ');
         const parts = cleaned.split(':').map(s => s.trim());
         if (parts.length === 2) {
@@ -1012,7 +1231,6 @@ async function doFetchMatches() {
       
       if (!homeKr || !awayKr) return;
       
-      // 영문팀명 매핑
       const homeEn = TEAM_MAP[homeKr] || '';
       const awayEn = TEAM_MAP[awayKr] || '';
       const leagueDb = LEAGUE_MAP[league] || league;
@@ -1065,7 +1283,7 @@ async function doFetchMatches() {
 app.listen(PORT, () => {
   console.log(`Proto Scraper Server running on port ${PORT}`);
   
-  // 서버 시작 후 10초 뒤 자동 스크래핑 (Render가 깨어날 때마다)
+  // 서버 시작 후 10초 뒤 자동 스크래핑
   setTimeout(async () => {
     try {
       // 먼저 경기 수 확인 → 부족하면 와이즈토토에서 가져오기
@@ -1077,12 +1295,12 @@ app.listen(PORT, () => {
         const matches = await supabaseGet('proto_matches',
           `round_year=eq.${round_year}&round_number=eq.${round_number}&match_type=eq.normal&select=id`);
         
-        console.log(`Current matches in DB: ${matches?.length || 0}`);
+        console.log(`Current matches in DB: ${matches?.length || 0} (round ${round_year}-${round_number})`);
         
         if (!matches?.length || matches.length < 30) {
           console.log('Auto-trigger: fetching matches from WiseToto first...');
           await doFetchMatches();
-          await new Promise(r => setTimeout(r, 5000)); // 5초 대기
+          await new Promise(r => setTimeout(r, 5000));
         }
       }
       
