@@ -179,46 +179,78 @@ async function doScrapeAndSave() {
     console.log(`Found ${matches?.length || 0} matches`);
 
     // 2. 각 사이트를 하나씩 가져오고, 파싱하고, HTML 해제 (메모리 절약)
+    // 프로토 경기는 수목금에 걸쳐있으므로 today + tomorrow + weekend 모두 가져와야 함
     const sources = [
-      { name: 'windrawwin', url: 'https://www.windrawwin.com/predictions/today/', wait: null, extraWait: 0 },
-      { name: 'predictz', url: 'https://www.predictz.com/predictions/', wait: null, extraWait: 15000 },
-      { name: 'forebet', url: 'https://www.forebet.com/en/football-predictions', wait: '.homeTeam', extraWait: 15000 },
-      { name: 'vitibet', url: 'https://www.vitibet.com/index.php?clanek=quicktips&sekce=fotbal&lang=en', wait: null, extraWait: 0 },
+      { name: 'windrawwin', urls: [
+        'https://www.windrawwin.com/predictions/today/',
+        'https://www.windrawwin.com/predictions/tomorrow/',
+        'https://www.windrawwin.com/predictions/weekend/',
+      ], wait: null, extraWait: 0 },
+      { name: 'predictz', urls: [
+        'https://www.predictz.com/predictions/',
+        'https://www.predictz.com/predictions/tomorrow/',
+      ], wait: null, extraWait: 15000 },
+      { name: 'forebet', urls: [
+        'https://www.forebet.com/en/football-predictions',
+        'https://www.forebet.com/en/football-predictions/predictions-tomorrow',
+      ], wait: '.homeTeam', extraWait: 15000 },
+      { name: 'vitibet', urls: [
+        // quicktips_toptips = next 7 days! 프로토 회차 전체를 커버
+        'https://www.vitibet.com/index.php?clanek=quicktips_toptips&sekce=fotbal&lang=en',
+        'https://www.vitibet.com/index.php?clanek=quicktips&sekce=fotbal&lang=en',
+      ], wait: null, extraWait: 0 },
     ];
 
     let saved = 0;
 
     for (const src of sources) {
+      // 여러 URL의 HTML을 합침
       let html = '';
       try {
-        console.log(`  Fetching ${src.name}...`);
-        html = await getPage(src.url, src.wait, 60000, src.extraWait || 0);
-        console.log(`  ${src.name}: ${html.length} chars`);
-      
-        // Cloudflare 차단 확인
-        if (html.includes('Just a moment') || html.includes('Checking your browser')) {
-          console.log(`  ${src.name} WARNING: Cloudflare blocked! Skipping...`);
-          html = '';
-        } else {
+        for (let i = 0; i < src.urls.length; i++) {
+          const url = src.urls[i];
+          const label = i === 0 ? src.name : `${src.name}[${i}]`;
+          console.log(`  Fetching ${label}...`);
+          
+          let pageHtml = '';
+          try {
+            pageHtml = await getPage(url, src.wait, 60000, src.extraWait || 0);
+            console.log(`  ${label}: ${pageHtml.length} chars`);
+          } catch (e) {
+            console.log(`  ${label}: FAILED - ${e.message}`);
+            continue;
+          }
+          
+          // Cloudflare 차단 확인
+          if (pageHtml.includes('Just a moment') || pageHtml.includes('Checking your browser')) {
+            console.log(`  ${label} WARNING: Cloudflare blocked! Skipping this URL...`);
+            continue;
+          }
+          
+          html += '\n' + pageHtml;
+
+          // 브라우저 닫아서 메모리 확보 (각 페이지 후)
+          if (browser) {
+            try { await browser.close(); } catch(e) {}
+            browser = null;
+          }
+        }
+        
+        console.log(`  ${src.name} TOTAL: ${html.length} chars`);
+        
+        if (html.length > 0) {
           // 팀명 존재 확인
           const testTeams = ['Liverpool', 'Arsenal', 'Barcelona', 'Bayern', 'Juventus', 'Dortmund', 'Monaco', 'Ajax', 'PSV', 'Napoli'];
           const foundTeam = testTeams.find(t => html.toLowerCase().includes(t.toLowerCase()));
           if (foundTeam) {
             console.log(`  ${src.name} OK: found team "${foundTeam}" in HTML`);
           } else {
-            console.log(`  ${src.name} WARNING: no known team found in HTML!`);
-            console.log(`  ${src.name} HTML preview: ${html.substring(0, 300).replace(/\n/g, ' ')}`);
+            console.log(`  ${src.name} WARNING: no known team found in combined HTML!`);
           }
         }
       } catch (e) {
         console.log(`  ${src.name}: FAILED - ${e.message}`);
         continue;
-      }
-
-      // 브라우저 닫아서 메모리 확보
-      if (browser) {
-        try { await browser.close(); } catch(e) {}
-        browser = null;
       }
 
       if (!html) continue;
