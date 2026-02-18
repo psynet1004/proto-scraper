@@ -50,24 +50,40 @@ async function getPage(url, waitSelector, timeout = 60000, extraWait = 0) {
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
   );
   await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
-  await page.setRequestInterception(true);
-  page.on('request', (req) => {
-    const type = req.resourceType();
-    const blockTypes = ['image', 'font', 'media'];
-    const blockUrls = ['google-analytics', 'googletagmanager', 'facebook', 'doubleclick'];
-    const u = req.url();
-    if (blockTypes.includes(type) || blockUrls.some(b => u.includes(b))) {
-      req.abort();
-    } else {
-      req.continue();
-    }
-  });
+  
+  // forebet (extraWait > 0): Cloudflare 우회를 위해 요청 차단 없이 완전한 브라우저로
+  if (extraWait === 0) {
+    await page.setRequestInterception(true);
+    page.on('request', (req) => {
+      const type = req.resourceType();
+      const blockTypes = ['image', 'font', 'media'];
+      const blockUrls = ['google-analytics', 'googletagmanager', 'facebook', 'doubleclick'];
+      const u = req.url();
+      if (blockTypes.includes(type) || blockUrls.some(b => u.includes(b))) {
+        req.abort();
+      } else {
+        req.continue();
+      }
+    });
+  }
 
   try {
-    // forebet needs networkidle2 for Cloudflare, others use domcontentloaded
     const waitUntil = extraWait > 0 ? 'networkidle2' : 'domcontentloaded';
     await page.goto(url, { waitUntil, timeout });
-    await new Promise(r => setTimeout(r, 3000 + extraWait));
+    
+    if (extraWait > 0) {
+      // Cloudflare 챌린지 대기: 최대 30초 동안 실제 콘텐츠 나타날 때까지 폴링
+      console.log(`  Waiting for Cloudflare challenge...`);
+      for (let i = 0; i < 6; i++) {
+        await new Promise(r => setTimeout(r, 5000));
+        const title = await page.title();
+        console.log(`  CF check ${i+1}/6: title="${title}"`);
+        if (!title.includes('moment') && !title.includes('Just')) break;
+      }
+    } else {
+      await new Promise(r => setTimeout(r, 3000));
+    }
+    
     if (waitSelector) {
       await page.waitForSelector(waitSelector, { timeout: 15000 }).catch(() => {});
     }
@@ -164,7 +180,7 @@ async function doScrapeAndSave() {
     const sources = [
       { name: 'windrawwin', url: 'https://www.windrawwin.com/predictions/today/', wait: null },
       { name: 'predictz', url: 'https://www.predictz.com/predictions/', wait: null },
-      { name: 'forebet', url: 'https://www.forebet.com/en/football-predictions', wait: null, extraWait: 10000 },
+      { name: 'forebet', url: 'https://www.forebet.com/en/football-predictions', wait: '.homeTeam', extraWait: 15000 },
       { name: 'vitibet', url: 'https://www.vitibet.com/index.php?clanek=quicktips&sekce=fotbal&lang=en', wait: null },
     ];
 
@@ -558,88 +574,134 @@ function parsePredictz(html, homeEn, awayEn) {
   return result;
 }
 
-// forebet: 다양한 HTML 구조 탐색
+// forebet: 실제 HTML 구조 확인됨
+// <div class="tnms"><span class="homeTeam">...</span><span class="awayTeam">...</span></div>
+// 스코어: <div class="rcnt"><span class="ex_sc">1 - 0</span></div> 또는 확률 기반
 function parseForebet(html, homeEn, awayEn) {
   const $ = cheerio.load(html);
   let result = null;
 
-  // forebet의 각 경기 블록 - 더 넓은 셀렉터
-  $('.rcnt, tr, div[class*="match"], div[class*="pred"], div[class*="row"], div[class*="contentRow"]').each((_, row) => {
+  // 전략 1: .rcnt (경기 행 컨테이너) 에서 homeTeam/awayTeam 검색
+  $('.rcnt').each((_, row) => {
     if (result) return;
-    const text = $(row).text();
-    if (text.length > 2000) return; // 너무 큰 컨테이너 스킵
-    if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
-
-    // 스코어 찾기
-    $(row).find('[class*="ex_sc"], [class*="score"], .foremark, span, div, td, strong').each((_, el) => {
-      if (result) return;
-      const t = $(el).text().trim();
-      const m = t.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
-      if (m) {
-        const hg = parseInt(m[1]), ag = parseInt(m[2]);
-        result = {
-          predicted_score: `${hg}-${ag}`,
-          predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
-        };
-      }
-    });
-
-    // 1X2 fallback: 가장 높은 확률의 결과
-    if (!result) {
-      const probs = {};
-      $(row).find('[class*="fprc"], [class*="prob"], [class*="prc"]').each((i, el) => {
-        const pct = parseInt($(el).text().trim());
-        if (pct > 0 && pct <= 100) probs[i] = pct;
+    
+    // homeTeam, awayTeam 텍스트 확인
+    const homeText = $(row).find('.homeTeam').text().trim();
+    const awayText = $(row).find('.awayTeam').text().trim();
+    
+    if (homeText && awayText && fuzzy(homeText, homeEn) && fuzzy(awayText, awayEn)) {
+      // 스코어 찾기
+      $(row).find('[class*="ex_sc"], [class*="score"], .foremark').each((_, el) => {
+        if (result) return;
+        const t = $(el).text().trim();
+        const m = t.match(/(\d+)\s*[-–:]\s*(\d+)/);
+        if (m) {
+          const hg = parseInt(m[1]), ag = parseInt(m[2]);
+          result = {
+            predicted_score: `${hg}-${ag}`,
+            predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
+          };
+        }
       });
-      const keys = Object.keys(probs);
-      if (keys.length >= 3) {
-        const maxI = keys.reduce((a, b) => probs[a] > probs[b] ? a : b);
-        const idx = parseInt(maxI);
-        if (idx === 0) result = { predicted_score: null, predicted_result: '승', confidence: probs[maxI] };
-        else if (idx === 1) result = { predicted_score: null, predicted_result: '무', confidence: probs[maxI] };
-        else if (idx === 2) result = { predicted_score: null, predicted_result: '패', confidence: probs[maxI] };
-      }
-    }
 
-    // 1/X/2 text fallback
-    if (!result) {
-      const allText = $(row).text();
-      const tip = allText.match(/tip[:\s]*([1X2])/i);
-      if (tip) {
-        if (tip[1] === '1') result = { predicted_score: null, predicted_result: '승' };
-        else if (tip[1] === '2') result = { predicted_score: null, predicted_result: '패' };
-        else if (tip[1].toUpperCase() === 'X') result = { predicted_score: null, predicted_result: '무' };
+      // 1X2 확률 fallback
+      if (!result) {
+        const probs = [];
+        $(row).find('[class*="fprc"], [class*="prob"]').each((_, el) => {
+          const pct = parseInt($(el).text().trim());
+          if (pct > 0 && pct <= 100) probs.push(pct);
+        });
+        if (probs.length >= 3) {
+          const maxIdx = probs.indexOf(Math.max(...probs));
+          if (maxIdx === 0) result = { predicted_score: null, predicted_result: '승', confidence: probs[0] };
+          else if (maxIdx === 1) result = { predicted_score: null, predicted_result: '무', confidence: probs[1] };
+          else if (maxIdx === 2) result = { predicted_score: null, predicted_result: '패', confidence: probs[2] };
+        }
+      }
+
+      // 1/X/2 팁 fallback
+      if (!result) {
+        const tipText = $(row).text();
+        const tip = tipText.match(/(?:tip|pred)[:\s]*([1X2])/i);
+        if (tip) {
+          if (tip[1] === '1') result = { predicted_score: null, predicted_result: '승' };
+          else if (tip[1] === '2') result = { predicted_score: null, predicted_result: '패' };
+          else result = { predicted_score: null, predicted_result: '무' };
+        }
       }
     }
   });
 
-  // 2차: 전체 검색
+  // 전략 2: .tnms 블록에서 검색 (실제 확인된 구조)
   if (!result) {
-    $('a, span, div, td').each((_, el) => {
+    $('.tnms').each((_, block) => {
       if (result) return;
-      const t = $(el).text().trim();
-      if (t.length > 200) return;
-      if (!fuzzy(t, homeEn) || !fuzzy(t, awayEn)) return;
+      const homeText = $(block).find('.homeTeam').text().trim();
+      const awayText = $(block).find('.awayTeam').text().trim();
       
-      const parent = $(el).parent();
-      const grandparent = parent.parent();
+      if (!homeText || !awayText) return;
+      if (!fuzzy(homeText, homeEn) || !fuzzy(awayText, awayEn)) return;
       
-      for (const container of [parent, grandparent]) {
+      // .tnms의 부모/형제에서 스코어 찾기
+      const parent = $(block).parent();
+      const gp = parent.parent();
+      
+      for (const container of [parent, gp]) {
         if (result) return;
-        container.find('span, div, td, strong').each((_, scoreEl) => {
+        container.find('[class*="ex_sc"], [class*="score"], .foremark, span, div').each((_, el) => {
           if (result) return;
-          const st = $(scoreEl).text().trim();
-          const sm = st.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
-          if (sm) {
-            const hg = parseInt(sm[1]), ag = parseInt(sm[2]);
+          const t = $(el).text().trim();
+          const m = t.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
+          if (m) {
+            const hg = parseInt(m[1]), ag = parseInt(m[2]);
             result = {
               predicted_score: `${hg}-${ag}`,
               predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
             };
           }
         });
+        
+        // 확률 fallback
+        if (!result) {
+          const probs = [];
+          container.find('[class*="fprc"], [class*="prob"]').each((_, el) => {
+            const pct = parseInt($(el).text().trim());
+            if (pct > 0 && pct <= 100) probs.push(pct);
+          });
+          if (probs.length >= 3) {
+            const maxIdx = probs.indexOf(Math.max(...probs));
+            if (maxIdx === 0) result = { predicted_score: null, predicted_result: '승', confidence: probs[0] };
+            else if (maxIdx === 1) result = { predicted_score: null, predicted_result: '무', confidence: probs[1] };
+            else if (maxIdx === 2) result = { predicted_score: null, predicted_result: '패', confidence: probs[2] };
+          }
+        }
       }
     });
+  }
+
+  // 전략 3: 전체 텍스트 검색 fallback
+  if (!result) {
+    const lowerHtml = html.toLowerCase();
+    const homeKey = homeEn.toLowerCase().split(/\s+/).find(w => w.length >= 4) || homeEn.toLowerCase();
+    const awayKey = awayEn.toLowerCase().split(/\s+/).find(w => w.length >= 4) || awayEn.toLowerCase();
+    
+    const homeIdx = lowerHtml.indexOf(homeKey);
+    if (homeIdx >= 0) {
+      const region = lowerHtml.substring(Math.max(0, homeIdx - 500), homeIdx + 2000);
+      if (region.includes(awayKey)) {
+        const regionHtml = html.substring(Math.max(0, homeIdx - 500), homeIdx + 2000);
+        const scoreMatch = regionHtml.match(/(\d+)\s*[-–:]\s*(\d+)/);
+        if (scoreMatch) {
+          const hg = parseInt(scoreMatch[1]), ag = parseInt(scoreMatch[2]);
+          if (hg < 20 && ag < 20) {
+            result = {
+              predicted_score: `${hg}-${ag}`,
+              predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
+            };
+          }
+        }
+      }
+    }
   }
 
   return result;
