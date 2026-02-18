@@ -42,12 +42,12 @@ async function getBrowser() {
   return browser;
 }
 
-async function getPage(url, waitSelector, timeout = 60000, extraWait = 0) {
+async function getPage(url, waitSelector, timeout = 60000, extraWait = 0, humanize = false) {
   const b = await getBrowser();
   const page = await b.newPage();
-  await page.setViewport({ width: 1280, height: 720 });
+  await page.setViewport({ width: 1366, height: 768 });
   await page.setUserAgent(
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
   );
   await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
   
@@ -72,13 +72,33 @@ async function getPage(url, waitSelector, timeout = 60000, extraWait = 0) {
     await page.goto(url, { waitUntil, timeout });
     
     if (extraWait > 0) {
-      // Cloudflare 챌린지 대기: 최대 60초 동안 실제 콘텐츠 나타날 때까지 폴링
+      // Cloudflare 챌린지 대기: 최대 90초 동안 실제 콘텐츠 나타날 때까지 폴링
       console.log(`  Waiting for Cloudflare challenge...`);
-      for (let i = 0; i < 12; i++) {
+      
+      // 인간처럼 행동: 마우스 이동 + 스크롤 (humanize 모드)
+      if (humanize) {
+        try {
+          await page.mouse.move(400 + Math.random() * 200, 300 + Math.random() * 100);
+          await new Promise(r => setTimeout(r, 500 + Math.random() * 500));
+          await page.mouse.move(600 + Math.random() * 100, 400 + Math.random() * 100);
+          await new Promise(r => setTimeout(r, 300));
+          await page.evaluate(() => window.scrollBy(0, 100));
+        } catch(e) {}
+      }
+      
+      for (let i = 0; i < 18; i++) {
         await new Promise(r => setTimeout(r, 5000));
         const title = await page.title();
-        console.log(`  CF check ${i+1}/12: title="${title}"`);
+        console.log(`  CF check ${i+1}/18: title="${title}"`);
         if (!title.includes('moment') && !title.includes('Just') && !title.includes('Checking')) break;
+        
+        // 3회 폴링마다 마우스 이동 (인간처럼)
+        if (humanize && i % 3 === 2) {
+          try {
+            await page.mouse.move(300 + Math.random() * 400, 200 + Math.random() * 300);
+            await page.evaluate(() => window.scrollBy(0, 50 + Math.random() * 100));
+          } catch(e) {}
+        }
       }
       // 추가 대기: 페이지 로딩 완료
       await new Promise(r => setTimeout(r, 3000));
@@ -191,9 +211,9 @@ async function doScrapeAndSave() {
         'https://www.predictz.com/predictions/tomorrow/',
       ], wait: null, extraWait: 15000 },
       { name: 'forebet', urls: [
-        'https://www.forebet.com/en/football-predictions',
-        'https://www.forebet.com/en/football-predictions/predictions-tomorrow',
-      ], wait: '.homeTeam', extraWait: 15000 },
+        'https://www.forebet.com/en/football-tips-and-predictions-for-today/predictions-1x2',
+        'https://www.forebet.com/en/football-tips-and-predictions-for-tomorrow/predictions-1x2',
+      ], wait: null, extraWait: 20000, humanize: true },
       { name: 'vitibet', urls: [
         // quicktips_toptips = next 7 days! 프로토 회차 전체를 커버
         'https://www.vitibet.com/index.php?clanek=quicktips_toptips&sekce=fotbal&lang=en',
@@ -214,7 +234,7 @@ async function doScrapeAndSave() {
           
           let pageHtml = '';
           try {
-            pageHtml = await getPage(url, src.wait, 60000, src.extraWait || 0);
+            pageHtml = await getPage(url, src.wait, 60000, src.extraWait || 0, src.humanize || false);
             console.log(`  ${label}: ${pageHtml.length} chars`);
           } catch (e) {
             console.log(`  ${label}: FAILED - ${e.message}`);
