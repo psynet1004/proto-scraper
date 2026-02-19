@@ -216,9 +216,18 @@ async function doScrapeAndSave() {
       //   'https://www.forebet.com/en/football-tips-and-predictions-for-tomorrow/predictions-1x2',
       // ], wait: null, extraWait: 20000, humanize: true },
       { name: 'vitibet', urls: [
-        // quicktips_toptips = next 7 days! 프로토 회차 전체를 커버
-        'https://www.vitibet.com/index.php?clanek=quicktips_toptips&sekce=fotbal&lang=en',
-        'https://www.vitibet.com/index.php?clanek=quicktips&sekce=fotbal&lang=en',
+        // 리그별 tips 페이지 (스코어 포함!)
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=champions2&lang=en',  // UCL
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=champions3&lang=en',  // UEL
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=champions4&lang=en',  // UECL
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=anglie&lang=en',      // EPL
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=spanelsko&lang=en',   // La Liga
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=italie&lang=en',      // Serie A
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=nemecko&lang=en',     // Bundesliga
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=francie&lang=en',     // Ligue 1
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=holandsko&lang=en',   // Eredivisie
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=australie&lang=en',   // A-League
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=japonsko&lang=en',    // J-League
       ], wait: null, extraWait: 0 },
     ];
 
