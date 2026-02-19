@@ -216,6 +216,9 @@ async function doScrapeAndSave() {
       //   'https://www.forebet.com/en/football-tips-and-predictions-for-tomorrow/predictions-1x2',
       // ], wait: null, extraWait: 20000, humanize: true },
       { name: 'vitibet', urls: [
+        // quicktips (승/무/패만 + 7일치 커버리지)
+        'https://www.vitibet.com/index.php?clanek=quicktips_toptips&sekce=fotbal&lang=en',
+        'https://www.vitibet.com/index.php?clanek=quicktips&sekce=fotbal&lang=en',
         // 리그별 tips 페이지 (스코어 포함!)
         'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=champions2&lang=en',  // UCL
         'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=champions3&lang=en',  // UEL
@@ -312,11 +315,11 @@ async function doScrapeAndSave() {
       }
       console.log(`  ${src.name}: ${matched} matched, ${unmatched} unmatched`);
       
-      // 디버그: 처음 5개 미매칭 팀명 로그
-      if (unmatched > matched && matched < 10) {
+      // 디버그: 처음 10개 미매칭 팀명 로그
+      if (unmatched > 0) {
         let debugCount = 0;
         for (const match of matches || []) {
-          if (debugCount >= 5) break;
+          if (debugCount >= 10) break;
           if (!match.home_team_en || !match.away_team_en) continue;
           const p = extractPrediction(html, match.home_team_en, match.away_team_en, src.name);
           if (!p) {
@@ -766,10 +769,11 @@ function parseForebet(html, homeEn, awayEn) {
 function parseVitibet(html, homeEn, awayEn) {
   const $ = cheerio.load(html);
   let result = null;
+  let resultNoScore = null; // 스코어 없는 결과 (fallback)
   const debugTeam = false; // 디버그 완료 - 프로덕션에서는 끔
 
   $('tr').each((_, row) => {
-    if (result) return;
+    if (result && result.predicted_score) return; // 스코어 있는 결과 찾으면 멈춤
     const text = $(row).text();
     if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
 
@@ -846,7 +850,7 @@ function parseVitibet(html, homeEn, awayEn) {
       }
     }
 
-    // 방법 5 (최후): 1X2만 (스코어 없음)
+    // 방법 5 (최후): 1X2만 (스코어 없음) - resultNoScore에 저장 (스코어 있는 결과 우선)
     if (!result) {
       // row의 마지막 td들에서 배경색 또는 클래스로 1/2/X 판별
       const lastTds = [];
@@ -859,12 +863,12 @@ function parseVitibet(html, homeEn, awayEn) {
       
       // 마지막에서 1, 2, X 찾기
       for (const td of lastTds.reverse()) {
-        if (result) break;
-        if (td.text === '1' || td.text === '01') { result = { predicted_score: null, predicted_result: '승' }; break; }
-        if (td.text === '2' || td.text === '02') { result = { predicted_score: null, predicted_result: '패' }; break; }
-        if (td.text.toUpperCase() === 'X') { result = { predicted_score: null, predicted_result: '무' }; break; }
+        if (resultNoScore) break;
+        if (td.text === '1' || td.text === '01') { resultNoScore = { predicted_score: null, predicted_result: '승' }; break; }
+        if (td.text === '2' || td.text === '02') { resultNoScore = { predicted_score: null, predicted_result: '패' }; break; }
+        if (td.text.toUpperCase() === 'X') { resultNoScore = { predicted_score: null, predicted_result: '무' }; break; }
       }
-      if (debugTeam && result) console.log(`  [vitibet-debug] Method5 (fallback): ${result.predicted_result} (no score)`);
+      if (debugTeam && resultNoScore) console.log(`  [vitibet-debug] Method5 (fallback): ${resultNoScore.predicted_result} (no score)`);
     }
   });
 
@@ -874,7 +878,8 @@ function parseVitibet(html, homeEn, awayEn) {
     if (debugTeam && result) console.log(`  [vitibet-debug] rawHtmlSearch fallback: ${result.predicted_score}`);
   }
 
-  return result;
+  // 스코어 있는 result 우선, 없으면 스코어 없는 resultNoScore
+  return result || resultNoScore;
 }
 
 // 원시 HTML 검색 (공통 fallback)
