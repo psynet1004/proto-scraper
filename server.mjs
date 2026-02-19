@@ -1840,10 +1840,30 @@ app.listen(PORT, () => {
       
       console.log('Auto-trigger: scraping on startup...');
       await doScrapeAndSave();
+      
+      // 스크래핑 완료 후 WiseToto 결과도 가져오기
+      console.log('Auto-trigger: fetching match results from WiseToto...');
+      await doFetchMatches();
+      
     } catch (e) {
       console.error('Auto startup error:', e.message);
     }
   }, 10000);
+  
+  // 2시간마다 자동 실행 (예측 스크래핑 + 경기 결과 수집)
+  const TWO_HOURS = 2 * 60 * 60 * 1000;
+  setInterval(async () => {
+    try {
+      console.log('=== Scheduled run (every 2h) ===');
+      await doScrapeAndSave();
+      console.log('Scheduled: fetching match results from WiseToto...');
+      await doFetchMatches();
+      console.log('=== Scheduled run complete ===');
+    } catch (e) {
+      console.error('Scheduled run error:', e.message);
+    }
+  }, TWO_HOURS);
+  console.log('Scheduled: auto scrape + fetch every 2 hours');
 });
 
 process.on('SIGTERM', async () => {
