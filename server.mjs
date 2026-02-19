@@ -210,11 +210,13 @@ async function doScrapeAndSave() {
         'https://www.predictz.com/predictions/',
         'https://www.predictz.com/predictions/tomorrow/',
       ], wait: null, extraWait: 15000 },
-      // forebet: Cloudflare Turnstile 완전 차단 - 데이터센터 IP로는 우회 불가. 비활성화.
-      // { name: 'forebet', urls: [
-      //   'https://www.forebet.com/en/football-tips-and-predictions-for-today/predictions-1x2',
-      //   'https://www.forebet.com/en/football-tips-and-predictions-for-tomorrow/predictions-1x2',
-      // ], wait: null, extraWait: 20000, humanize: true },
+      // forebet: Cloudflare Turnstile 완전 차단 - footballpredictions.ai로 대체
+      { name: 'fpai', urls: [
+        'https://footballpredictions.ai/football-predictions/correct-score-predictions/',
+        'https://footballpredictions.ai/tomorrow',
+        'https://footballpredictions.ai/after-tomorrow',
+        'https://footballpredictions.ai/weekend',
+      ], wait: null, extraWait: 0 },
       { name: 'vitibet', urls: [
         // quicktips (승/무/패만 + 7일치 커버리지)
         'https://www.vitibet.com/index.php?clanek=quicktips_toptips&sekce=fotbal&lang=en',
@@ -447,6 +449,7 @@ function extractPrediction(html, homeEn, awayEn, source) {
       case 'windrawwin': return parseWindrawwin(html, homeEn, awayEn);
       case 'predictz': return parsePredictz(html, homeEn, awayEn);
       case 'forebet': return parseForebet(html, homeEn, awayEn);
+      case 'fpai': return parseFpai(html, homeEn, awayEn);
       case 'vitibet': return parseVitibet(html, homeEn, awayEn);
       default: return null;
     }
@@ -762,6 +765,98 @@ function parseForebet(html, homeEn, awayEn) {
     result = rawHtmlSearch(html, homeEn, awayEn);
   }
 
+  return result;
+}
+
+// footballpredictions.ai parser
+function parseFpai(html, homeEn, awayEn) {
+  if (!html) return null;
+  
+  const aliases = [...getAliases(homeEn), homeEn];
+  const awayAliases = [...getAliases(awayEn), awayEn];
+  
+  // HTML에서 a 태그의 title 속성으로 팀명 매칭
+  // 패턴: title="HomeTeam - AwayTeam" 안에 스코어 "N - M" 이 텍스트로 포함
+  // correct-score 페이지 구조: <a ...>HomeTeam AwayTeam N - M</a>
+  // 또는 일반 페이지: <a ...>HomeTeam AwayTeam</a> (스코어 없음)
+  
+  const cheerioLib = cheerio.load(html);
+  let result = null;
+  
+  // 모든 a 태그 검색
+  cheerioLib('a').each((_, el) => {
+    if (result) return;
+    const title = cheerioLib(el).attr('title') || '';
+    const text = cheerioLib(el).text().trim();
+    const href = cheerioLib(el).attr('href') || '';
+    
+    // predictions 링크만
+    if (!href.includes('predictions') && !href.includes('tips')) return;
+    
+    // 홈팀 매칭
+    const homeMatch = aliases.some(a => {
+      const al = a.toLowerCase();
+      return title.toLowerCase().includes(al) || text.toLowerCase().includes(al);
+    });
+    if (!homeMatch) return;
+    
+    // 원정팀 매칭
+    const awayMatch = awayAliases.some(a => {
+      const al = a.toLowerCase();
+      return title.toLowerCase().includes(al) || text.toLowerCase().includes(al);
+    });
+    if (!awayMatch) return;
+    
+    // 스코어 추출 - 텍스트에서 "N - M" 또는 "N-M" 패턴
+    const scoreMatch = text.match(/(\d+)\s*[-–]\s*(\d+)\s*$/);
+    if (scoreMatch) {
+      const hg = parseInt(scoreMatch[1]), ag = parseInt(scoreMatch[2]);
+      result = {
+        predicted_score: `${hg}-${ag}`,
+        predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무'
+      };
+    }
+  });
+  
+  // 대안: rawHtmlSearch
+  if (!result) {
+    // 텍스트 기반 검색: "HomeTeam\nAwayTeam\nN - M" 패턴
+    const lines = html.replace(/<[^>]+>/g, '\n').split('\n').map(l => l.trim()).filter(Boolean);
+    for (let i = 0; i < lines.length - 2; i++) {
+      const homeMatch = aliases.some(a => lines[i].toLowerCase().includes(a.toLowerCase()));
+      if (!homeMatch) continue;
+      
+      const awayMatch = awayAliases.some(a => lines[i+1].toLowerCase().includes(a.toLowerCase()));
+      if (!awayMatch) {
+        // 같은 줄에 두 팀이 있을 수도 있음 "HomeTeam - AwayTeam"
+        const sameLine = awayAliases.some(a => lines[i].toLowerCase().includes(a.toLowerCase()));
+        if (sameLine) {
+          // 다음 줄에서 스코어 찾기
+          for (let j = i+1; j < Math.min(i+3, lines.length); j++) {
+            const sm = lines[j].match(/^(\d+)\s*[-–]\s*(\d+)$/);
+            if (sm) {
+              const hg = parseInt(sm[1]), ag = parseInt(sm[2]);
+              result = { predicted_score: `${hg}-${ag}`, predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무' };
+              break;
+            }
+          }
+        }
+        continue;
+      }
+      
+      // 다음 줄들에서 스코어 찾기
+      for (let j = i+2; j < Math.min(i+5, lines.length); j++) {
+        const sm = lines[j].match(/^(\d+)\s*[-–]\s*(\d+)$/);
+        if (sm) {
+          const hg = parseInt(sm[1]), ag = parseInt(sm[2]);
+          result = { predicted_score: `${hg}-${ag}`, predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무' };
+          break;
+        }
+      }
+      if (result) break;
+    }
+  }
+  
   return result;
 }
 
@@ -1560,6 +1655,97 @@ async function doFetchMatches() {
 }
 
 // ====== START ======
+// ====== 수익률 계산 API ======
+app.get('/yield', async (req, res) => {
+  try {
+    const { round_year, round_number } = req.query;
+    if (!round_year || !round_number) {
+      return res.json({ error: 'round_year and round_number required' });
+    }
+
+    // 1. 해당 라운드 경기 가져오기 (결과 포함)
+    const matches = await supabaseGet('proto_matches',
+      `round_year=eq.${round_year}&round_number=eq.${round_number}&match_type=eq.normal&order=match_number&select=*`);
+    
+    if (!matches || matches.length === 0) {
+      return res.json({ error: 'No matches found' });
+    }
+
+    // 2. 해당 라운드 예측 가져오기
+    const matchIds = matches.map(m => m.id);
+    const predictions = await supabaseGet('predictions',
+      `match_id=in.(${matchIds.join(',')})&select=*`);
+
+    // 3. 사이트별 수익률 계산
+    const sources = ['windrawwin', 'predictz', 'fpai', 'vitibet'];
+    const yieldData = {};
+
+    for (const source of sources) {
+      let totalBet = 0;
+      let totalReturn = 0;
+      let totalBetOverseas = 0;
+      let totalReturnOverseas = 0;
+      let matchCount = 0;
+
+      for (const match of matches) {
+        // 이 경기의 해당 소스 예측
+        const pred = predictions?.find(p => p.match_id === match.id && p.source === source);
+        if (!pred || !pred.predicted_result) continue;
+        
+        // 실제 결과가 있는지 확인
+        if (!match.actual_result) continue;
+        
+        matchCount++;
+        
+        // 국내배당
+        const domesticOdds = pred.predicted_result === '승' ? match.odds_home :
+                             pred.predicted_result === '무' ? match.odds_draw :
+                             pred.predicted_result === '패' ? match.odds_away : 0;
+        
+        // 해외배당
+        const overseasOdds = pred.predicted_result === '승' ? match.odds_home_overseas :
+                              pred.predicted_result === '무' ? match.odds_draw_overseas :
+                              pred.predicted_result === '패' ? match.odds_away_overseas : 0;
+        
+        if (domesticOdds) {
+          totalBet += 1;
+          if (pred.predicted_result === match.actual_result) {
+            totalReturn += domesticOdds;
+          }
+        }
+        
+        if (overseasOdds) {
+          totalBetOverseas += 1;
+          if (pred.predicted_result === match.actual_result) {
+            totalReturnOverseas += overseasOdds;
+          }
+        }
+      }
+
+      const domesticYield = totalBet > 0 ? ((totalReturn / totalBet - 1) * 100).toFixed(0) : null;
+      const overseasYield = totalBetOverseas > 0 ? ((totalReturnOverseas / totalBetOverseas - 1) * 100).toFixed(0) : null;
+      
+      yieldData[source] = {
+        domestic: totalBet > 0 ? {
+          return: totalReturn.toFixed(2),
+          bet: totalBet,
+          yield_pct: domesticYield
+        } : null,
+        overseas: totalBetOverseas > 0 ? {
+          return: totalReturnOverseas.toFixed(2),
+          bet: totalBetOverseas,
+          yield_pct: overseasYield
+        } : null,
+        matchCount
+      };
+    }
+
+    res.json({ success: true, round_year, round_number, yield: yieldData });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Proto Scraper Server running on port ${PORT}`);
   
