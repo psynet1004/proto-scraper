@@ -707,12 +707,21 @@ function parseForebet(html, homeEn, awayEn) {
 function parseVitibet(html, homeEn, awayEn) {
   const $ = cheerio.load(html);
   let result = null;
+  const debugTeam = true; // 임시: 모든 매칭에 디버그 로그 출력
 
   $('tr').each((_, row) => {
     if (result) return;
     const text = $(row).text();
     if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
 
+    if (debugTeam) {
+      console.log(`  [vitibet-debug] Matched row for ${homeEn} vs ${awayEn}`);
+      // row의 실제 HTML 출력 (처음 500자)
+      const rowHtml = $(row).html() || '';
+      console.log(`  [vitibet-debug] Row HTML: ${rowHtml.substring(0, 500)}`);
+    }
+
+    // 방법 1: 단일 td/span에서 "숫자-숫자" or "숫자:숫자" 찾기
     $(row).find('td, span, a').each((_, el) => {
       if (result) return;
       const t = $(el).text().trim();
@@ -720,23 +729,90 @@ function parseVitibet(html, homeEn, awayEn) {
       if (m) {
         const hg = parseInt(m[1]), ag = parseInt(m[2]);
         result = { predicted_score: `${hg}-${ag}`, predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무' };
+        if (debugTeam) console.log(`  [vitibet-debug] Method1: found ${hg}-${ag} in single element`);
       }
     });
 
+    // 방법 2: td 셀들을 나열해서 "숫자 : 숫자" 패턴 찾기 (vitibet tips 페이지)
     if (!result) {
-      $(row).find('td, span').each((_, el) => {
-        if (result) return;
-        const t = $(el).text().trim();
-        if (t === '1') result = { predicted_score: null, predicted_result: '승' };
-        else if (t === '2') result = { predicted_score: null, predicted_result: '패' };
-        else if (t.toUpperCase() === 'X') result = { predicted_score: null, predicted_result: '무' };
+      const tds = [];
+      $(row).find('td').each((_, td) => {
+        tds.push($(td).text().trim());
       });
+      if (debugTeam) console.log(`  [vitibet-debug] TD cells: [${tds.join('|')}]`);
+      
+      // td 배열에서 연속된 "숫자", ":", "숫자" 패턴 검색
+      for (let i = 0; i < tds.length - 2; i++) {
+        const a = tds[i], sep = tds[i+1], b = tds[i+2];
+        if (/^\d+$/.test(a) && (sep === ':' || sep === '-' || sep === '–') && /^\d+$/.test(b)) {
+          const hg = parseInt(a), ag = parseInt(b);
+          if (hg < 20 && ag < 20) {
+            result = { predicted_score: `${hg}-${ag}`, predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무' };
+            if (debugTeam) console.log(`  [vitibet-debug] Method2: found ${hg}-${ag} from td sequence`);
+            break;
+          }
+        }
+      }
+      
+      // td 배열에서 연속된 "숫자", "숫자" (구분자 없이) 확인 - 백분율% 다음이 아닌 경우
+      if (!result) {
+        const allTdText = tds.join(' ');
+        const scoreM = allTdText.match(/(\d+)\s*[:–-]\s*(\d+)/);
+        if (scoreM) {
+          const hg = parseInt(scoreM[1]), ag = parseInt(scoreM[2]);
+          if (hg < 20 && ag < 20) {
+            result = { predicted_score: `${hg}-${ag}`, predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무' };
+            if (debugTeam) console.log(`  [vitibet-debug] Method3: found ${hg}-${ag} from joined td text`);
+          }
+        }
+      }
+    }
+
+    // 방법 4: row 전체 텍스트에서 스코어 추출 (팀명 제외하고)
+    if (!result) {
+      // 팀명을 제거한 후 남은 텍스트에서 스코어 패턴 찾기
+      let cleanText = text;
+      const homeAliases = getAliases(homeEn);
+      const awayAliases = getAliases(awayEn);
+      for (const alias of [...homeAliases, ...awayAliases]) {
+        cleanText = cleanText.replace(new RegExp(alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '');
+      }
+      const scoreMatch = cleanText.match(/(\d+)\s*[:–-]\s*(\d+)/);
+      if (scoreMatch) {
+        const hg = parseInt(scoreMatch[1]), ag = parseInt(scoreMatch[2]);
+        if (hg < 20 && ag < 20) {
+          result = { predicted_score: `${hg}-${ag}`, predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무' };
+          if (debugTeam) console.log(`  [vitibet-debug] Method4: found ${hg}-${ag} from cleaned row text`);
+        }
+      }
+    }
+
+    // 방법 5 (최후): 1X2만 (스코어 없음)
+    if (!result) {
+      // row의 마지막 td들에서 배경색 또는 클래스로 1/2/X 판별
+      const lastTds = [];
+      $(row).find('td').each((_, td) => {
+        const t = $(td).text().trim();
+        const cls = $(td).attr('class') || '';
+        const style = $(td).attr('style') || '';
+        lastTds.push({ text: t, class: cls, style: style });
+      });
+      
+      // 마지막에서 1, 2, X 찾기
+      for (const td of lastTds.reverse()) {
+        if (result) break;
+        if (td.text === '1' || td.text === '01') { result = { predicted_score: null, predicted_result: '승' }; break; }
+        if (td.text === '2' || td.text === '02') { result = { predicted_score: null, predicted_result: '패' }; break; }
+        if (td.text.toUpperCase() === 'X') { result = { predicted_score: null, predicted_result: '무' }; break; }
+      }
+      if (debugTeam && result) console.log(`  [vitibet-debug] Method5 (fallback): ${result.predicted_result} (no score)`);
     }
   });
 
   // Fallback: 원시 HTML 검색
   if (!result) {
     result = rawHtmlSearch(html, homeEn, awayEn);
+    if (debugTeam && result) console.log(`  [vitibet-debug] rawHtmlSearch fallback: ${result.predicted_score}`);
   }
 
   return result;
