@@ -1533,9 +1533,9 @@ async function doFetchMatches() {
     // 1. 와이즈토토 메인 → 프로토 승부식 페이지
     console.log('  Loading wisetoto...');
     await page.goto('https://www.wisetoto.com/index.htm?tab_type=proto&game_type=pt&game_category=pt1', {
-      waitUntil: 'domcontentloaded', timeout: 30000,
+      waitUntil: 'domcontentloaded', timeout: 60000,
     });
-    await new Promise(r => setTimeout(r, 5000));
+    await new Promise(r => setTimeout(r, 8000));
 
     // 2. 축구 버튼 클릭
     console.log('  Clicking soccer filter...');
