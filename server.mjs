@@ -459,8 +459,11 @@ function extractPrediction(html, homeEn, awayEn, source) {
 }
 
 // windrawwin: div.wttd.wtfixt 에 팀명, span.predscore 에 스코어
+let _wdwCache = { html: null, $: null };
 function parseWindrawwin(html, homeEn, awayEn) {
-  const $ = cheerio.load(html);
+  let $;
+  if (_wdwCache.html === html) { $ = _wdwCache.$; }
+  else { $ = cheerio.load(html); _wdwCache = { html, $ }; }
   let result = null;
 
   $('div.wtfixt, div[class*="wtfixt"]').each((_, row) => {
@@ -530,8 +533,11 @@ function parseWindrawwin(html, homeEn, awayEn) {
 }
 
 // predictz parser
+let _predzCache = { html: null, $: null };
 function parsePredictz(html, homeEn, awayEn) {
-  const $ = cheerio.load(html);
+  let $;
+  if (_predzCache.html === html) { $ = _predzCache.$; }
+  else { $ = cheerio.load(html); _predzCache = { html, $ }; }
   let result = null;
 
   // ★ 전략 0: predictz 전용 - ptpredboxsml에서 "Draw 1-1", "Home 2-0", "Away 0-1" 추출
@@ -860,9 +866,16 @@ function parseFpai(html, homeEn, awayEn) {
   return result;
 }
 
-// vitibet parser
+// vitibet parser - with cheerio caching to avoid re-parsing 3.8MB HTML 32 times
+let _vitibetCache = { html: null, $: null };
 function parseVitibet(html, homeEn, awayEn) {
-  const $ = cheerio.load(html);
+  let $;
+  if (_vitibetCache.html === html) {
+    $ = _vitibetCache.$;
+  } else {
+    $ = cheerio.load(html);
+    _vitibetCache = { html, $ };
+  }
   let result = null;
   let resultNoScore = null; // 스코어 없는 결과 (fallback)
   const debugTeam = false; // 디버그 완료 - 프로덕션에서는 끔
