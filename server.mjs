@@ -1606,11 +1606,20 @@ async function doFetchMatches() {
       
       if (!homeKr || !awayKr) return;
       
+      // 경기 결과(스코어) 파싱 - "홈팀 N : M 원정팀" 형태
+      let actualHomeScore = null, actualAwayScore = null, actualResult = null;
+      const scoreMatch = matchInfo.match(/(\d+)\s*:\s*(\d+)/);
+      if (scoreMatch) {
+        actualHomeScore = parseInt(scoreMatch[1]);
+        actualAwayScore = parseInt(scoreMatch[2]);
+        actualResult = actualHomeScore > actualAwayScore ? '승' : actualHomeScore < actualAwayScore ? '패' : '무';
+      }
+      
       const homeEn = TEAM_MAP[homeKr] || '';
       const awayEn = TEAM_MAP[awayKr] || '';
       const leagueDb = LEAGUE_MAP[league] || league;
       
-      matches.push({
+      const matchData = {
         round_year: roundYear,
         round_number: roundNumber,
         match_number: matchNum,
@@ -1620,7 +1629,26 @@ async function doFetchMatches() {
         away_team_en: awayEn,
         league: leagueDb,
         match_type: 'normal',
-      });
+      };
+      
+      // 결과가 있으면 추가
+      if (actualHomeScore !== null) {
+        matchData.actual_home_score = actualHomeScore;
+        matchData.actual_away_score = actualAwayScore;
+        matchData.actual_result = actualResult;
+      }
+      
+      // 배당 파싱 (있으면)
+      try {
+        const oddsHome = parseFloat($(cells[5]).text().trim());
+        const oddsDraw = parseFloat($(cells[6]).text().trim());
+        const oddsAway = parseFloat($(cells[7]).text().trim());
+        if (oddsHome > 0) matchData.odds_home = oddsHome;
+        if (oddsDraw > 0) matchData.odds_draw = oddsDraw;
+        if (oddsAway > 0) matchData.odds_away = oddsAway;
+      } catch (e) { /* 배당 파싱 실패 무시 */ }
+      
+      matches.push(matchData);
     });
 
     console.log(`  Parsed ${matches.length} soccer matches`);
