@@ -528,30 +528,76 @@ function parsePredictz(html, homeEn, awayEn) {
   const $ = cheerio.load(html);
   let result = null;
 
-  // 전략 1: 상위 컨테이너
-  $('div[class*="pointed"], div[class*="ptcon"], div[class*="ptdiv"], div[class*="pttr"], .pointed, table').each((_, container) => {
+  // ★ 전략 0: predictz 전용 - ptpredboxsml에서 "Draw 1-1", "Home 2-0", "Away 0-1" 추출
+  $('div.pttr, div.ptcnt, div[class*="pttr"]').each((_, container) => {
     if (result) return;
     const text = $(container).text();
     if (text.length > 5000 || text.length < 10) return;
     if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
 
-    $(container).find('div, span, a, td, strong').each((_, el) => {
+    // ptpredboxsml 안에서 "Home 2-1", "Draw 1-1", "Away 0-2" 패턴
+    $(container).find('div[class*="ptpredbox"], div[class*="predbox"], .ptpredboxsml').each((_, el) => {
       if (result) return;
       const t = $(el).text().trim();
-      const m = t.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
+      // "Draw 1-1", "Home 2-0", "Away 0-1" 형태
+      const m = t.match(/(?:Home|Draw|Away)\s+(\d+)\s*[-–]\s*(\d+)/i);
       if (m) {
         const hg = parseInt(m[1]), ag = parseInt(m[2]);
         result = { predicted_score: `${hg}-${ag}`, predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무' };
       }
     });
 
+    // ptpredboxsml 못 찾으면 전체 텍스트에서 패턴 찾기
     if (!result) {
-      const allText = $(container).text().toLowerCase();
-      if (allText.includes('home win')) result = { predicted_score: null, predicted_result: '승' };
-      else if (allText.includes('away win')) result = { predicted_score: null, predicted_result: '패' };
-      else if (allText.includes('draw')) result = { predicted_score: null, predicted_result: '무' };
+      const predMatch = text.match(/(?:Home|Draw|Away)\s+(\d+)\s*[-–]\s*(\d+)/i);
+      if (predMatch) {
+        const hg = parseInt(predMatch[1]), ag = parseInt(predMatch[2]);
+        result = { predicted_score: `${hg}-${ag}`, predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무' };
+      }
     }
   });
+
+  // 전략 1: 상위 컨테이너 (기존)
+  if (!result) {
+    $('div[class*="pointed"], div[class*="ptcon"], div[class*="ptdiv"], div[class*="pttr"], .pointed, table').each((_, container) => {
+      if (result) return;
+      const text = $(container).text();
+      if (text.length > 5000 || text.length < 10) return;
+      if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
+
+      // 먼저 "Home/Draw/Away N-N" 패턴
+      $(container).find('div, span, a, td, strong').each((_, el) => {
+        if (result) return;
+        const t = $(el).text().trim();
+        const predM = t.match(/(?:Home|Draw|Away)\s+(\d+)\s*[-–]\s*(\d+)/i);
+        if (predM) {
+          const hg = parseInt(predM[1]), ag = parseInt(predM[2]);
+          result = { predicted_score: `${hg}-${ag}`, predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무' };
+          return;
+        }
+        const m = t.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
+        if (m) {
+          const hg = parseInt(m[1]), ag = parseInt(m[2]);
+          result = { predicted_score: `${hg}-${ag}`, predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무' };
+        }
+      });
+
+      if (!result) {
+        const allText = $(container).text();
+        const homeAwayDraw = allText.match(/(?:Home|Draw|Away)\s+(\d+)\s*[-–]\s*(\d+)/i);
+        if (homeAwayDraw) {
+          const hg = parseInt(homeAwayDraw[1]), ag = parseInt(homeAwayDraw[2]);
+          result = { predicted_score: `${hg}-${ag}`, predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무' };
+        } else if (allText.toLowerCase().includes('home win')) {
+          result = { predicted_score: null, predicted_result: '승' };
+        } else if (allText.toLowerCase().includes('away win')) {
+          result = { predicted_score: null, predicted_result: '패' };
+        } else if (allText.toLowerCase().includes('draw')) {
+          result = { predicted_score: null, predicted_result: '무' };
+        }
+      }
+    });
+  }
 
   // 전략 2: pptr 행
   if (!result) {
@@ -564,15 +610,22 @@ function parsePredictz(html, homeEn, awayEn) {
       for (let depth = 0; depth < 5 && container.length; depth++) {
         const containerText = container.text();
         if (fuzzy(containerText, awayEn)) {
-          container.find('div, span, a, strong').each((_, el) => {
-            if (result) return;
-            const t = $(el).text().trim();
-            const m = t.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
-            if (m) {
-              const hg = parseInt(m[1]), ag = parseInt(m[2]);
-              result = { predicted_score: `${hg}-${ag}`, predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무' };
-            }
-          });
+          // 먼저 "Home/Draw/Away N-N" 패턴
+          const predM = containerText.match(/(?:Home|Draw|Away)\s+(\d+)\s*[-–]\s*(\d+)/i);
+          if (predM) {
+            const hg = parseInt(predM[1]), ag = parseInt(predM[2]);
+            result = { predicted_score: `${hg}-${ag}`, predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무' };
+          } else {
+            container.find('div, span, a, strong').each((_, el) => {
+              if (result) return;
+              const t = $(el).text().trim();
+              const m = t.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
+              if (m) {
+                const hg = parseInt(m[1]), ag = parseInt(m[2]);
+                result = { predicted_score: `${hg}-${ag}`, predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무' };
+              }
+            });
+          }
           break;
         }
         container = container.parent();
@@ -586,6 +639,12 @@ function parsePredictz(html, homeEn, awayEn) {
       if (result) return;
       const text = $(row).text();
       if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
+      const predM = text.match(/(?:Home|Draw|Away)\s+(\d+)\s*[-–]\s*(\d+)/i);
+      if (predM) {
+        const hg = parseInt(predM[1]), ag = parseInt(predM[2]);
+        result = { predicted_score: `${hg}-${ag}`, predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무' };
+        return;
+      }
       $(row).find('td, span, a, div, strong').each((_, el) => {
         if (result) return;
         const t = $(el).text().trim();
@@ -707,7 +766,7 @@ function parseForebet(html, homeEn, awayEn) {
 function parseVitibet(html, homeEn, awayEn) {
   const $ = cheerio.load(html);
   let result = null;
-  const debugTeam = true; // 임시: 모든 매칭에 디버그 로그 출력
+  const debugTeam = false; // 디버그 완료 - 프로덕션에서는 끔
 
   $('tr').each((_, row) => {
     if (result) return;
