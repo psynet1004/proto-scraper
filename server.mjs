@@ -1597,7 +1597,7 @@ async function doFetchMatches() {
       if (isNaN(matchNum)) return;
       
       // 디버그: 처음 10개 행의 모든 li 클래스와 텍스트 출력
-      if (debugCount < 10) {
+      if (debugCount < 3) {
         const liInfo = [];
         $ul.find('li').each((_, li) => {
           const cls = $(li).attr('class') || 'no-class';
@@ -1608,25 +1608,15 @@ async function doFetchMatches() {
         debugCount++;
       }
       
-      // 유형 필터: 여러 방법으로 핸디/언오버/합계 제외
-      const allText = $ul.text();
+      // 유형 필터: hp(핸디), un(언오버), d5(합계)가 있으면 제외 → 일반 승무패만
+      const hasHp = $ul.find('li.hp').length > 0 || $ul.find('li[class*="hp"]').length > 0;
+      const hasUn = $ul.find('li.un').length > 0 || $ul.find('li[class*="un"]').length > 0;
+      const hasD5 = $ul.find('li.d5').length > 0;
+      if (hasHp || hasUn || hasD5) return;
       
-      // 방법1: li.hm 체크
-      const typeEl = $ul.find('li.hm');
-      const typeText = typeEl.text().trim();
-      if (typeText && typeText !== '') return;
-      
-      // 방법2: li.a5 체크
-      const a5El = $ul.find('li.a5');
-      const a5Text = a5El.text().trim();
-      if (a5Text && /^(H|U|SUM|핸디|언오버|합계)/i.test(a5Text)) return;
-      
-      // 방법3: 전체 텍스트에서 핸디/언오버 패턴 체크
-      if (/\bH\s*[+-]?\d/.test(allText) || /\bU\s*\d/.test(allText) || /\bSUM\b/i.test(allText)) return;
-      
-      // 방법4: 같은 경기번호가 이미 있으면 (일반은 첫 번째만) 제외
-      // WiseToto에서 같은 팀 매칭의 일반은 항상 가장 낮은 번호
-      // → 일반 승무패는 스코어("N:M")가 있거나 배당 3개가 직접 보임
+      // hm이 있어야 일반 승무패
+      const hasHm = $ul.find('li.hm').length > 0;
+      if (!hasHm) return;
       
       // 리그
       const league = $ul.find('li.a4').text().trim().replace(/[⚽🏀🏐⚾]/g, '').trim();
