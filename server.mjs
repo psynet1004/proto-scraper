@@ -1595,10 +1595,15 @@ async function doFetchMatches() {
       const matchNum = parseInt(noEl.text().trim());
       if (isNaN(matchNum)) return;
       
-      // 유형 칸 (a5/hm) - 비어있으면 일반 승무패
+      // 유형 칸 - 핸디캡(H), 언오버(U), 합계(SUM) 등은 제외, 빈칸만 일반 승무패
       const typeEl = $ul.find('li.hm');
       const typeText = typeEl.text().trim();
       if (typeText && typeText !== '') return;
+      
+      // 추가 필터: a5 클래스도 체크 (일부 행에서 li.a5에 유형 표시)
+      const a5El = $ul.find('li.a5');
+      const a5Text = a5El.text().trim();
+      if (a5Text && /^(H|U|SUM|핸디|언오버|합계)/i.test(a5Text)) return;
       
       // 리그
       const league = $ul.find('li.a4').text().trim().replace(/[⚽🏀🏐⚾]/g, '').trim();
@@ -1651,20 +1656,18 @@ async function doFetchMatches() {
         away_team_en: awayEn,
         league: leagueDb,
         match_type: 'normal',
+        actual_home_score: (actualHomeScore !== null && !isNaN(actualHomeScore)) ? actualHomeScore : null,
+        actual_away_score: (actualAwayScore !== null && !isNaN(actualAwayScore)) ? actualAwayScore : null,
+        actual_result: actualResult || null,
+        odds_home: oddsHome || null,
+        odds_draw: oddsDraw || null,
+        odds_away: oddsAway || null,
       };
       
-      // 결과가 있으면 추가
-      if (actualHomeScore !== null && !isNaN(actualHomeScore)) {
-        matchData.actual_home_score = actualHomeScore;
-        matchData.actual_away_score = actualAwayScore;
-        matchData.actual_result = actualResult;
-        console.log(`    Match ${matchNum}: ${homeKr} ${actualHomeScore}:${actualAwayScore} ${awayKr} → ${actualResult}`);
+      // 결과 로그
+      if (matchData.actual_home_score !== null) {
+        console.log(`    Match ${matchNum}: ${homeKr} ${matchData.actual_home_score}:${matchData.actual_away_score} ${awayKr} → ${matchData.actual_result}`);
       }
-      
-      // 배당 추가
-      if (oddsHome) matchData.odds_home = oddsHome;
-      if (oddsDraw) matchData.odds_draw = oddsDraw;
-      if (oddsAway) matchData.odds_away = oddsAway;
       
       matches.push(matchData);
     });
