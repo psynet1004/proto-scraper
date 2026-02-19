@@ -1571,48 +1571,57 @@ async function doFetchMatches() {
     
     console.log(`  Round: ${roundYear}-${roundNumber || '?'}`);
 
-    // 5. 경기 목록 파싱
+    // 5. 경기 목록 파싱 (WiseToto는 ul/li 구조)
     const matches = [];
     
-    $('tr').each((_, row) => {
-      const cells = $(row).find('td');
-      if (cells.length < 5) return;
+    $('ul').each((_, ul) => {
+      const $ul = $(ul);
+      const noEl = $ul.find('li.a1');
+      if (!noEl.length) return;
       
-      const no = $(cells[0]).text().trim();
-      const matchNum = parseInt(no);
+      const matchNum = parseInt(noEl.text().trim());
       if (isNaN(matchNum)) return;
       
-      // 유형 칸 확인 - 비어있으면 일반 승무패
-      const typeCell = $(cells[3]).text().trim();
-      if (typeCell && typeCell !== '') return;
+      // 유형 칸 (a5/hm) - 비어있으면 일반 승무패
+      const typeEl = $ul.find('li.hm');
+      const typeText = typeEl.text().trim();
+      if (typeText && typeText !== '') return;
       
-      const league = $(cells[2]).text().trim().replace(/[⚽🏀🏐⚾]/g, '').trim();
-      const matchInfo = $(cells[4]).text().trim();
+      // 리그
+      const league = $ul.find('li.a4').text().trim().replace(/[⚽🏀🏐⚾]/g, '').trim();
       
-      let homeKr = '', awayKr = '';
+      // 홈팀명 + 홈스코어
+      const a6 = $ul.find('li.a6');
+      const homeKr = a6.find('span.tn').text().trim() || a6.find('span.tnb').text().trim();
       
-      const links = $(cells[4]).find('a');
-      if (links.length >= 2) {
-        homeKr = $(links[0]).text().trim();
-        awayKr = $(links[1]).text().trim();
-      } else {
-        const cleaned = matchInfo.replace(/\d+\s*:\s*\d+/, ':').replace(/\s+/g, ' ');
-        const parts = cleaned.split(':').map(s => s.trim());
-        if (parts.length === 2) {
-          homeKr = parts[0].replace(/\d+$/, '').trim();
-          awayKr = parts[1].replace(/^\d+/, '').trim();
-        }
-      }
+      // 원정팀명 + 원정스코어
+      const a8 = $ul.find('li.a8');
+      const awayKr = a8.find('span.tnb').text().trim() || a8.find('span.tn').text().trim();
       
       if (!homeKr || !awayKr) return;
       
-      // 경기 결과(스코어) 파싱 - "홈팀 N : M 원정팀" 형태
+      // 경기 결과(스코어) 파싱
       let actualHomeScore = null, actualAwayScore = null, actualResult = null;
-      const scoreMatch = matchInfo.match(/(\d+)\s*:\s*(\d+)/);
-      if (scoreMatch) {
-        actualHomeScore = parseInt(scoreMatch[1]);
-        actualAwayScore = parseInt(scoreMatch[2]);
-        actualResult = actualHomeScore > actualAwayScore ? '승' : actualHomeScore < actualAwayScore ? '패' : '무';
+      const homeScoreEl = a6.find('span.win, span.lose, span.draw');
+      const awayScoreEl = a8.find('span.win, span.lose, span.draw');
+      if (homeScoreEl.length && awayScoreEl.length) {
+        actualHomeScore = parseInt(homeScoreEl.text().trim());
+        actualAwayScore = parseInt(awayScoreEl.text().trim());
+        if (!isNaN(actualHomeScore) && !isNaN(actualAwayScore)) {
+          actualResult = actualHomeScore > actualAwayScore ? '승' : actualHomeScore < actualAwayScore ? '패' : '무';
+        }
+      }
+      
+      // 배당 파싱 (a9 li가 3개)
+      const oddsEls = $ul.find('li.a9');
+      let oddsHome = null, oddsDraw = null, oddsAway = null;
+      if (oddsEls.length >= 3) {
+        const o1 = parseFloat($(oddsEls[0]).find('span.pt').text().trim());
+        const o2 = parseFloat($(oddsEls[1]).find('span.pt').text().trim());
+        const o3 = parseFloat($(oddsEls[2]).find('span.pt').text().trim());
+        if (o1 > 0) oddsHome = o1;
+        if (o2 > 0) oddsDraw = o2;
+        if (o3 > 0) oddsAway = o3;
       }
       
       const homeEn = TEAM_MAP[homeKr] || '';
@@ -1632,21 +1641,17 @@ async function doFetchMatches() {
       };
       
       // 결과가 있으면 추가
-      if (actualHomeScore !== null) {
+      if (actualHomeScore !== null && !isNaN(actualHomeScore)) {
         matchData.actual_home_score = actualHomeScore;
         matchData.actual_away_score = actualAwayScore;
         matchData.actual_result = actualResult;
+        console.log(`    Match ${matchNum}: ${homeKr} ${actualHomeScore}:${actualAwayScore} ${awayKr} → ${actualResult}`);
       }
       
-      // 배당 파싱 (있으면)
-      try {
-        const oddsHome = parseFloat($(cells[5]).text().trim());
-        const oddsDraw = parseFloat($(cells[6]).text().trim());
-        const oddsAway = parseFloat($(cells[7]).text().trim());
-        if (oddsHome > 0) matchData.odds_home = oddsHome;
-        if (oddsDraw > 0) matchData.odds_draw = oddsDraw;
-        if (oddsAway > 0) matchData.odds_away = oddsAway;
-      } catch (e) { /* 배당 파싱 실패 무시 */ }
+      // 배당 추가
+      if (oddsHome) matchData.odds_home = oddsHome;
+      if (oddsDraw) matchData.odds_draw = oddsDraw;
+      if (oddsAway) matchData.odds_away = oddsAway;
       
       matches.push(matchData);
     });
