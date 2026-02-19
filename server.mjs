@@ -1586,6 +1586,7 @@ async function doFetchMatches() {
 
     // 5. 경기 목록 파싱 (WiseToto는 ul/li 구조)
     const matches = [];
+    const seenTeams = new Set();
     let debugCount = 0;
     
     $('ul').each((_, ul) => {
@@ -1681,6 +1682,11 @@ async function doFetchMatches() {
       if (matchData.actual_home_score !== null) {
         console.log(`    Match ${matchNum}: ${homeKr} ${matchData.actual_home_score}:${matchData.actual_away_score} ${awayKr} → ${matchData.actual_result}`);
       }
+      
+      // 같은 홈팀 vs 원정팀 조합이 이미 있으면 제외 (핸디/언오버 변형)
+      const teamKey = `${homeKr}_${awayKr}`;
+      if (seenTeams.has(teamKey)) return;
+      seenTeams.add(teamKey);
       
       matches.push(matchData);
     });
