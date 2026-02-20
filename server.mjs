@@ -1518,41 +1518,82 @@ app.get('/fetch-matches', auth, async (req, res) => {
 async function doFetchMatches() {
   console.log('=== Fetching matches from WiseToto ===');
   
-  let b = null;
+  // 방법 1: 가벼운 fetch로 시도 (Puppeteer 없이)
+  let html = '';
+  const wisetotoUrl = 'https://www.wisetoto.com/index.htm?tab_type=proto&game_type=pt&game_category=pt1';
+  
   try {
-    b = await puppeteer.launch({
-      headless: 'new',
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--single-process', '--no-zygote'],
+    console.log('  Trying lightweight fetch...');
+    const resp = await fetch(wisetotoUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'ko-KR,ko;q=0.9',
+      },
+      signal: AbortSignal.timeout(30000),
     });
-
-    const page = await b.newPage();
-    await page.setViewport({ width: 1280, height: 720 });
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
-
-    // 1. 와이즈토토 메인 → 프로토 승부식 페이지
-    console.log('  Loading wisetoto...');
-    await page.goto('https://www.wisetoto.com/index.htm?tab_type=proto&game_type=pt&game_category=pt1', {
-      waitUntil: 'domcontentloaded', timeout: 60000,
-    });
-    await new Promise(r => setTimeout(r, 8000));
-
-    // 2. 축구 버튼 클릭
-    console.log('  Clicking soccer filter...');
-    try {
-      await page.evaluate(() => {
-        const btn = document.querySelector('a.btn.soccer, a[title="축구"]');
-        if (btn) btn.click();
-      });
-      await new Promise(r => setTimeout(r, 3000));
-    } catch (e) {
-      console.log('  Soccer button click failed, trying without filter');
+    html = await resp.text();
+    console.log(`  Fetch OK: ${html.length} chars`);
+  } catch (e) {
+    console.log(`  Lightweight fetch failed: ${e.message}, falling back to Puppeteer...`);
+  }
+  
+  // fetch로 HTML 충분하지 않으면 Puppeteer fallback (재시도 2회)
+  if (html.length < 5000 || !html.includes('li')) {
+    console.log('  HTML too small or missing data, using Puppeteer...');
+    html = '';
+    
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      let b = null;
+      try {
+        console.log(`  Puppeteer attempt ${attempt}/2...`);
+        b = await puppeteer.launch({
+          headless: 'new',
+          executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+          args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--single-process', '--no-zygote'],
+        });
+        const page = await b.newPage();
+        await page.setViewport({ width: 1280, height: 720 });
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+        
+        await page.goto(wisetotoUrl, {
+          waitUntil: 'domcontentloaded', timeout: 90000,
+        });
+        await new Promise(r => setTimeout(r, 10000));
+        
+        // 축구 버튼 클릭
+        try {
+          await page.evaluate(() => {
+            const btn = document.querySelector('a.btn.soccer, a[title="축구"]');
+            if (btn) btn.click();
+          });
+          await new Promise(r => setTimeout(r, 3000));
+        } catch (e) {}
+        
+        html = await page.content();
+        await page.close();
+        console.log(`  Puppeteer OK: ${html.length} chars`);
+        break; // 성공하면 루프 탈출
+      } catch (e) {
+        console.error(`  Puppeteer attempt ${attempt} failed: ${e.message}`);
+      } finally {
+        if (b) try { await b.close(); } catch(e) {}
+      }
+      
+      if (attempt < 2) {
+        console.log('  Waiting 10s before retry...');
+        await new Promise(r => setTimeout(r, 10000));
+      }
     }
-
-    // 3. HTML 가져오기
-    const html = await page.content();
-    console.log(`  HTML: ${html.length} chars`);
-    await page.close();
+  }
+  
+  if (!html || html.length < 5000) {
+    console.log('  All methods failed, skipping this cycle');
+    return;
+  }
+  
+  // 이하 파싱 로직 (기존과 동일)
+  try {
 
     // 4. 회차 정보 파싱
     const $ = cheerio.load(html);
@@ -1717,8 +1758,6 @@ async function doFetchMatches() {
 
   } catch (e) {
     console.error('Fetch matches error:', e.message);
-  } finally {
-    if (b) await b.close().catch(() => {});
   }
 }
 
