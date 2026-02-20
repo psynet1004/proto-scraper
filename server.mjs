@@ -1541,7 +1541,7 @@ async function doFetchMatches() {
   // fetch HTML에서 회차만 추출 (경기 데이터는 JS 동적 로딩이라 없음)
   let fetchRoundYear = null, fetchRoundNumber = null;
   if (html.length > 1000) {
-    const rm = html.match(/(\\d{4})년도.*?(\\d+)회차/s) || html.match(/game_year=(\\d{4})&game_round=(\\d+)/);
+    const rm = html.match(/(\d{4})년도.*?(\d+)회차/s) || html.match(/game_year=(\d{4})&game_round=(\d+)/);
     if (rm) { fetchRoundYear = rm[1]; fetchRoundNumber = parseInt(rm[2]); }
     console.log(`  Fetch detected round: ${fetchRoundYear}-${fetchRoundNumber || '?'}`);
   }
