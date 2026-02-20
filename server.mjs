@@ -1870,51 +1870,78 @@ app.listen(PORT, () => {
   // 서버 시작 후 10초 뒤 자동 실행
   setTimeout(async () => {
     try {
-      // 1. 항상 WiseToto에서 최신 경기 목록 가져오기 (새 회차 자동 감지)
-      console.log('Auto-trigger: fetching matches from WiseToto...');
-      await doFetchMatches();
-      // 30초 대기 (Puppeteer 메모리 해제)
-      await new Promise(r => setTimeout(r, 30000));
-      
-      // 2. 예측 스크래핑 (DB 최신 회차 기준)
-      console.log('Auto-trigger: scraping predictions...');
-      await doScrapeAndSave();
-      // 30초 대기
-      await new Promise(r => setTimeout(r, 30000));
-      
-      // 3. WiseToto 결과 업데이트 (스코어/배당)
-      console.log('Auto-trigger: updating match results...');
-      await doFetchMatches();
-      
+      await runFullCycle('startup');
     } catch (e) {
       console.error('Auto startup error:', e.message);
     }
   }, 10000);
   
-  // 2시간마다 자동 실행
-  const TWO_HOURS = 2 * 60 * 60 * 1000;
-  setInterval(async () => {
+  // === 스케줄러 ===
+  // 전체 사이클 함수
+  async function runFullCycle(label) {
+    console.log(`=== ${label}: full cycle start ===`);
     try {
-      console.log('=== Scheduled run (every 2h) ===');
-      // 1. WiseToto에서 경기 목록 가져오기 (새 회차 자동 감지)
-      console.log('Scheduled: fetching matches from WiseToto...');
+      console.log(`${label}: fetching matches from WiseToto...`);
       await doFetchMatches();
-      // 30초 대기 (Puppeteer 메모리 해제)
       await new Promise(r => setTimeout(r, 30000));
-      // 2. 예측 스크래핑 (DB 최신 회차 기준)
-      console.log('Scheduled: scraping predictions...');
+      
+      console.log(`${label}: scraping predictions...`);
       await doScrapeAndSave();
-      // 30초 대기
       await new Promise(r => setTimeout(r, 30000));
-      // 3. WiseToto 결과 업데이트 (스코어/배당)
-      console.log('Scheduled: updating match results...');
+      
+      console.log(`${label}: updating match results...`);
       await doFetchMatches();
-      console.log('=== Scheduled run complete ===');
+      console.log(`=== ${label}: full cycle complete ===`);
     } catch (e) {
-      console.error('Scheduled run error:', e.message);
+      console.error(`${label} error:`, e.message);
     }
-  }, TWO_HOURS);
-  console.log('Scheduled: auto scrape + fetch every 2 hours');
+  }
+  
+  // 2시간마다 기본 업데이트
+  setInterval(() => runFullCycle('Scheduled-2h'), 2 * 60 * 60 * 1000);
+  
+  // 발매 시간 기반 스케줄 (KST 14:05에 트리거)
+  // 월요일(1), 수요일(3), 금요일(5) 14:05 KST
+  function scheduleSaleTriggers() {
+    const now = new Date();
+    const kst = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+    const day = kst.getDay(); // 0=Sun, 1=Mon, ...
+    const saleDays = [1, 3, 5]; // 월, 수, 금
+    
+    for (const targetDay of saleDays) {
+      // 다음 해당 요일까지 남은 일수 계산
+      let daysUntil = targetDay - day;
+      if (daysUntil < 0) daysUntil += 7;
+      if (daysUntil === 0) {
+        // 오늘이 해당 요일이면 14:05 이미 지났는지 확인
+        const targetTime = new Date(kst);
+        targetTime.setHours(14, 5, 0, 0);
+        if (kst >= targetTime) daysUntil = 7; // 이미 지남 → 다음주
+      }
+      
+      const target = new Date(kst);
+      target.setDate(target.getDate() + daysUntil);
+      target.setHours(14, 5, 0, 0);
+      
+      // KST → UTC 변환 (KST = UTC+9)
+      const targetUTC = new Date(target.getTime() - 9 * 60 * 60 * 1000);
+      // 실제 UTC now와의 차이
+      const msUntil = targetUTC.getTime() - now.getTime();
+      
+      if (msUntil > 0 && msUntil < 7 * 24 * 60 * 60 * 1000) {
+        const dayNames = ['일','월','화','수','목','금','토'];
+        console.log(`  Sale trigger: ${dayNames[targetDay]}요일 14:05 KST (${Math.round(msUntil/60000)}분 후)`);
+        setTimeout(() => {
+          runFullCycle(`Sale-${dayNames[targetDay]}`);
+          // 실행 후 다음 주기 재스케줄
+          scheduleSaleTriggers();
+        }, msUntil);
+      }
+    }
+  }
+  
+  scheduleSaleTriggers();
+  console.log('Scheduled: 2h regular + Mon/Wed/Fri 14:05 KST sale triggers');
 });
 
 process.on('SIGTERM', async () => {
