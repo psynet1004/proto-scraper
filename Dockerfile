@@ -24,4 +24,4 @@ COPY . .
 
 EXPOSE 3000
 
-CMD ["node", "server.mjs"]
+CMD ["node", "--expose-gc", "--max-old-space-size=400", "server.mjs"]
