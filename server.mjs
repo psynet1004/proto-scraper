@@ -1511,17 +1511,17 @@ const LEAGUE_MAP = {
 
 // ====== FETCH MATCHES FROM WISETOTO ======
 app.get('/fetch-matches', auth, async (req, res) => {
-  res.json({ message: 'Fetching matches started', timestamp: new Date().toISOString() });
-  doFetchMatches().catch(e => console.error('Fetch matches error:', e.message));
+  res.json({ message: 'Fetching matches started (with Puppeteer)', timestamp: new Date().toISOString() });
+  doFetchMatches(true).catch(e => console.error('Fetch matches error:', e.message));
 });
 
-async function doFetchMatches() {
+async function doFetchMatches(usePuppeteer = false) {
   console.log('=== Fetching matches from WiseToto ===');
   
-  // 방법 1: 가벼운 fetch로 시도 (Puppeteer 없이)
   let html = '';
   const wisetotoUrl = 'https://www.wisetoto.com/index.htm?tab_type=proto&game_type=pt&game_category=pt1';
   
+  // 1단계: 가벼운 fetch (회차 감지 + 가능하면 데이터도)
   try {
     console.log('  Trying lightweight fetch...');
     const resp = await fetch(wisetotoUrl, {
@@ -1538,27 +1538,29 @@ async function doFetchMatches() {
     console.log(`  Lightweight fetch failed: ${e.message}`);
   }
   
-  // fetch HTML에서 회차만 추출 (경기 데이터는 JS 동적 로딩이라 없음)
-  let fetchRoundYear = null, fetchRoundNumber = null;
+  // fetch HTML에서 회차 추출
+  let roundYear = new Date().getFullYear().toString();
+  let roundNumber = null;
   if (html.length > 1000) {
     const rm = html.match(/(\d{4})년도.*?(\d+)회차/s) || html.match(/game_year=(\d{4})&game_round=(\d+)/);
-    if (rm) { fetchRoundYear = rm[1]; fetchRoundNumber = parseInt(rm[2]); }
-    console.log(`  Fetch detected round: ${fetchRoundYear}-${fetchRoundNumber || '?'}`);
+    if (rm) { roundYear = rm[1]; roundNumber = parseInt(rm[2]); }
+    console.log(`  Fetch detected round: ${roundYear}-${roundNumber || '?'}`);
   }
   
-  // Puppeteer로 경기 데이터 가져오기 (재시도 2회)
-  html = '';
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  // fetch HTML에 경기 데이터가 있는지 확인 (li.a1 = 경기번호)
+  const hasMatchData = html.includes('class="a1"') || html.includes('class=\\"a1\\"');
+  
+  // 2단계: Puppeteer (수동 호출 시만 OR fetch에 데이터 없을 때)
+  if (usePuppeteer && !hasMatchData) {
+    console.log('  Using Puppeteer for full data...');
     let b = null;
     try {
-      console.log(`  Puppeteer attempt ${attempt}/2...`);
       b = await puppeteer.launch({
         headless: 'new',
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--single-process', '--no-zygote'],
       });
       const page = await b.newPage();
-      // 리소스 절약: 이미지/폰트/스타일 차단
       await page.setRequestInterception(true);
       page.on('request', req => {
         const t = req.resourceType();
@@ -1568,12 +1570,9 @@ async function doFetchMatches() {
       await page.setViewport({ width: 1280, height: 720 });
       await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
       
-      await page.goto(wisetotoUrl, {
-        waitUntil: 'networkidle2', timeout: 90000,
-      });
+      await page.goto(wisetotoUrl, { waitUntil: 'networkidle2', timeout: 90000 });
       await new Promise(r => setTimeout(r, 5000));
       
-      // 축구 버튼 클릭
       try {
         await page.evaluate(() => {
           const btn = document.querySelector('a.btn.soccer, a[title="축구"]');
@@ -1585,21 +1584,14 @@ async function doFetchMatches() {
       html = await page.content();
       await page.close();
       console.log(`  Puppeteer OK: ${html.length} chars`);
-      break;
     } catch (e) {
-      console.error(`  Puppeteer attempt ${attempt} failed: ${e.message}`);
+      console.error(`  Puppeteer failed: ${e.message}`);
     } finally {
       if (b) try { await b.close(); } catch(e) {}
     }
-    
-    if (attempt < 2) {
-      console.log('  Waiting 15s before retry...');
-      await new Promise(r => setTimeout(r, 15000));
-    }
-  }
-  
-  if (!html || html.length < 5000) {
-    console.log('  Puppeteer failed, skipping this cycle');
+  } else if (!hasMatchData) {
+    console.log('  No match data in fetch HTML, skipping Puppeteer (auto mode)');
+    console.log('  Use /fetch-matches endpoint manually to load match data with Puppeteer');
     return;
   }
   
@@ -1881,24 +1873,10 @@ app.listen(PORT, () => {
   async function runFullCycle(label) {
     console.log(`=== ${label}: full cycle start ===`);
     try {
-      // 1. WiseToto에서 경기 목록
-      console.log(`${label}: fetching matches from WiseToto...`);
-      await doFetchMatches();
-      // 메모리 해제: 60초 대기 + GC
-      if (global.gc) { global.gc(); console.log('  GC triggered'); }
-      await new Promise(r => setTimeout(r, 60000));
-      
-      // 2. 예측 스크래핑
+      // 예측 스크래핑만 실행 (Puppeteer 1회만 사용 → 메모리 안전)
       console.log(`${label}: scraping predictions...`);
       await doScrapeAndSave();
-      // 메모리 해제: 60초 대기 + GC
       if (global.gc) { global.gc(); console.log('  GC triggered'); }
-      await new Promise(r => setTimeout(r, 60000));
-      
-      // 3. WiseToto 결과 업데이트
-      console.log(`${label}: updating match results...`);
-      await doFetchMatches();
-      if (global.gc) global.gc();
       console.log(`=== ${label}: full cycle complete ===`);
     } catch (e) {
       console.error(`${label} error:`, e.message);
