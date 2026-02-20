@@ -1867,32 +1867,23 @@ app.get('/yield', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Proto Scraper Server running on port ${PORT}`);
   
-  // 서버 시작 후 10초 뒤 자동 스크래핑
+  // 서버 시작 후 10초 뒤 자동 실행
   setTimeout(async () => {
     try {
-      // 먼저 경기 수 확인 → 부족하면 와이즈토토에서 가져오기
-      const latest = await supabaseGet('proto_matches',
-        'match_type=eq.normal&order=round_number.desc&limit=1&select=round_year,round_number');
+      // 1. 항상 WiseToto에서 최신 경기 목록 가져오기 (새 회차 자동 감지)
+      console.log('Auto-trigger: fetching matches from WiseToto...');
+      await doFetchMatches();
+      // 30초 대기 (Puppeteer 메모리 해제)
+      await new Promise(r => setTimeout(r, 30000));
       
-      if (latest?.length) {
-        const { round_year, round_number } = latest[0];
-        const matches = await supabaseGet('proto_matches',
-          `round_year=eq.${round_year}&round_number=eq.${round_number}&match_type=eq.normal&select=id`);
-        
-        console.log(`Current matches in DB: ${matches?.length || 0} (round ${round_year}-${round_number})`);
-        
-        if (!matches?.length || matches.length < 30) {
-          console.log('Auto-trigger: fetching matches from WiseToto first...');
-          await doFetchMatches();
-          await new Promise(r => setTimeout(r, 5000));
-        }
-      }
-      
-      console.log('Auto-trigger: scraping on startup...');
+      // 2. 예측 스크래핑 (DB 최신 회차 기준)
+      console.log('Auto-trigger: scraping predictions...');
       await doScrapeAndSave();
+      // 30초 대기
+      await new Promise(r => setTimeout(r, 30000));
       
-      // 스크래핑 완료 후 WiseToto 결과도 가져오기
-      console.log('Auto-trigger: fetching match results from WiseToto...');
+      // 3. WiseToto 결과 업데이트 (스코어/배당)
+      console.log('Auto-trigger: updating match results...');
       await doFetchMatches();
       
     } catch (e) {
