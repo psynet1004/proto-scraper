@@ -1535,60 +1535,71 @@ async function doFetchMatches() {
     html = await resp.text();
     console.log(`  Fetch OK: ${html.length} chars`);
   } catch (e) {
-    console.log(`  Lightweight fetch failed: ${e.message}, falling back to Puppeteer...`);
+    console.log(`  Lightweight fetch failed: ${e.message}`);
   }
   
-  // fetch로 HTML 충분하지 않으면 Puppeteer fallback (재시도 2회)
-  if (html.length < 5000 || !html.includes('li')) {
-    console.log('  HTML too small or missing data, using Puppeteer...');
-    html = '';
-    
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      let b = null;
-      try {
-        console.log(`  Puppeteer attempt ${attempt}/2...`);
-        b = await puppeteer.launch({
-          headless: 'new',
-          executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-          args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--single-process', '--no-zygote'],
-        });
-        const page = await b.newPage();
-        await page.setViewport({ width: 1280, height: 720 });
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
-        
-        await page.goto(wisetotoUrl, {
-          waitUntil: 'domcontentloaded', timeout: 90000,
-        });
-        await new Promise(r => setTimeout(r, 10000));
-        
-        // 축구 버튼 클릭
-        try {
-          await page.evaluate(() => {
-            const btn = document.querySelector('a.btn.soccer, a[title="축구"]');
-            if (btn) btn.click();
-          });
-          await new Promise(r => setTimeout(r, 3000));
-        } catch (e) {}
-        
-        html = await page.content();
-        await page.close();
-        console.log(`  Puppeteer OK: ${html.length} chars`);
-        break; // 성공하면 루프 탈출
-      } catch (e) {
-        console.error(`  Puppeteer attempt ${attempt} failed: ${e.message}`);
-      } finally {
-        if (b) try { await b.close(); } catch(e) {}
-      }
+  // fetch HTML에서 회차만 추출 (경기 데이터는 JS 동적 로딩이라 없음)
+  let fetchRoundYear = null, fetchRoundNumber = null;
+  if (html.length > 1000) {
+    const rm = html.match(/(\\d{4})년도.*?(\\d+)회차/s) || html.match(/game_year=(\\d{4})&game_round=(\\d+)/);
+    if (rm) { fetchRoundYear = rm[1]; fetchRoundNumber = parseInt(rm[2]); }
+    console.log(`  Fetch detected round: ${fetchRoundYear}-${fetchRoundNumber || '?'}`);
+  }
+  
+  // Puppeteer로 경기 데이터 가져오기 (재시도 2회)
+  html = '';
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    let b = null;
+    try {
+      console.log(`  Puppeteer attempt ${attempt}/2...`);
+      b = await puppeteer.launch({
+        headless: 'new',
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--single-process', '--no-zygote'],
+      });
+      const page = await b.newPage();
+      // 리소스 절약: 이미지/폰트/스타일 차단
+      await page.setRequestInterception(true);
+      page.on('request', req => {
+        const t = req.resourceType();
+        if (['image', 'font', 'stylesheet', 'media'].includes(t)) req.abort();
+        else req.continue();
+      });
+      await page.setViewport({ width: 1280, height: 720 });
+      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
       
-      if (attempt < 2) {
-        console.log('  Waiting 10s before retry...');
-        await new Promise(r => setTimeout(r, 10000));
-      }
+      await page.goto(wisetotoUrl, {
+        waitUntil: 'networkidle2', timeout: 90000,
+      });
+      await new Promise(r => setTimeout(r, 5000));
+      
+      // 축구 버튼 클릭
+      try {
+        await page.evaluate(() => {
+          const btn = document.querySelector('a.btn.soccer, a[title="축구"]');
+          if (btn) btn.click();
+        });
+        await new Promise(r => setTimeout(r, 3000));
+      } catch (e) {}
+      
+      html = await page.content();
+      await page.close();
+      console.log(`  Puppeteer OK: ${html.length} chars`);
+      break;
+    } catch (e) {
+      console.error(`  Puppeteer attempt ${attempt} failed: ${e.message}`);
+    } finally {
+      if (b) try { await b.close(); } catch(e) {}
+    }
+    
+    if (attempt < 2) {
+      console.log('  Waiting 15s before retry...');
+      await new Promise(r => setTimeout(r, 15000));
     }
   }
   
   if (!html || html.length < 5000) {
-    console.log('  All methods failed, skipping this cycle');
+    console.log('  Puppeteer failed, skipping this cycle');
     return;
   }
   
@@ -1897,10 +1908,13 @@ app.listen(PORT, () => {
       // 1. WiseToto에서 경기 목록 가져오기 (새 회차 자동 감지)
       console.log('Scheduled: fetching matches from WiseToto...');
       await doFetchMatches();
-      await new Promise(r => setTimeout(r, 5000));
+      // 30초 대기 (Puppeteer 메모리 해제)
+      await new Promise(r => setTimeout(r, 30000));
       // 2. 예측 스크래핑 (DB 최신 회차 기준)
       console.log('Scheduled: scraping predictions...');
       await doScrapeAndSave();
+      // 30초 대기
+      await new Promise(r => setTimeout(r, 30000));
       // 3. WiseToto 결과 업데이트 (스코어/배당)
       console.log('Scheduled: updating match results...');
       await doFetchMatches();
