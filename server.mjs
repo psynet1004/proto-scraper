@@ -210,13 +210,7 @@ async function doScrapeAndSave() {
         'https://www.predictz.com/predictions/',
         'https://www.predictz.com/predictions/tomorrow/',
       ], wait: null, extraWait: 15000 },
-      // forebet: Cloudflare Turnstile 완전 차단 - footballpredictions.ai로 대체
-      { name: 'fpai', urls: [
-        'https://footballpredictions.ai/football-predictions/correct-score-predictions/',
-        'https://footballpredictions.ai/tomorrow',
-        'https://footballpredictions.ai/after-tomorrow',
-        'https://footballpredictions.ai/weekend',
-      ], wait: null, extraWait: 0 },
+      // fpai (footballpredictions.ai): 별도 처리 - 개별 매치 페이지에서 correct score 추출
       { name: 'vitibet', urls: [
         // quicktips (승/무/패만 + 7일치 커버리지)
         'https://www.vitibet.com/index.php?clanek=quicktips_toptips&sekce=fotbal&lang=en',
@@ -335,7 +329,18 @@ async function doScrapeAndSave() {
       html = '';
     }
 
-    console.log(`=== Done: ${saved} predictions saved ===`);
+    console.log(`=== Main sources done: ${saved} predictions saved ===`);
+
+    // fpai (footballpredictions.ai) 별도 처리 - 개별 매치 페이지에서 correct score 추출
+    try {
+      const fpaiSaved = await scrapeFpai(matches);
+      saved += fpaiSaved;
+      console.log(`  fpai: ${fpaiSaved} predictions saved`);
+    } catch(e) {
+      console.log(`  fpai ERROR: ${e.message}`);
+    }
+
+    console.log(`=== Done: ${saved} total predictions saved ===`);
 
   } finally {
     isRunning = false;
@@ -774,96 +779,161 @@ function parseForebet(html, homeEn, awayEn) {
   return result;
 }
 
-// footballpredictions.ai parser
-function parseFpai(html, homeEn, awayEn) {
-  if (!html) return null;
+// ====== footballpredictions.ai 2단계 스크래핑 ======
+// 1단계: 목록 페이지에서 모든 매치 URL 수집
+// 2단계: DB 매치와 매칭된 개별 페이지에서 Correct Score 추출
+// CF 없으므로 Puppeteer 불필요, 일반 fetch 사용
+
+async function scrapeFpai(matches) {
+  if (!matches?.length) return 0;
   
-  const aliases = [...getAliases(homeEn), homeEn];
-  const awayAliases = [...getAliases(awayEn), awayEn];
+  console.log('  [fpai] Starting 2-stage scraping...');
   
-  // HTML에서 a 태그의 title 속성으로 팀명 매칭
-  // 패턴: title="HomeTeam - AwayTeam" 안에 스코어 "N - M" 이 텍스트로 포함
-  // correct-score 페이지 구조: <a ...>HomeTeam AwayTeam N - M</a>
-  // 또는 일반 페이지: <a ...>HomeTeam AwayTeam</a> (스코어 없음)
+  // 1단계: 목록 페이지들에서 매치 URL 수집
+  const listUrls = [
+    'https://footballpredictions.ai/',
+    'https://footballpredictions.ai/tomorrow',
+    'https://footballpredictions.ai/after-tomorrow',
+    'https://footballpredictions.ai/weekend',
+    'https://footballpredictions.ai/football-predictions/correct-score-predictions/',
+  ];
   
-  const cheerioLib = cheerio.load(html);
-  let result = null;
+  const matchUrls = new Map(); // title -> URL
   
-  // 모든 a 태그 검색
-  cheerioLib('a').each((_, el) => {
-    if (result) return;
-    const title = cheerioLib(el).attr('title') || '';
-    const text = cheerioLib(el).text().trim();
-    const href = cheerioLib(el).attr('href') || '';
-    
-    // predictions 링크만
-    if (!href.includes('predictions') && !href.includes('tips')) return;
-    
-    // 홈팀 매칭
-    const homeMatch = aliases.some(a => {
-      const al = a.toLowerCase();
-      return title.toLowerCase().includes(al) || text.toLowerCase().includes(al);
-    });
-    if (!homeMatch) return;
-    
-    // 원정팀 매칭
-    const awayMatch = awayAliases.some(a => {
-      const al = a.toLowerCase();
-      return title.toLowerCase().includes(al) || text.toLowerCase().includes(al);
-    });
-    if (!awayMatch) return;
-    
-    // 스코어 추출 - 텍스트에서 "N - M" 또는 "N-M" 패턴
-    const scoreMatch = text.match(/(\d+)\s*[-–]\s*(\d+)\s*$/);
-    if (scoreMatch) {
-      const hg = parseInt(scoreMatch[1]), ag = parseInt(scoreMatch[2]);
-      result = {
-        predicted_score: `${hg}-${ag}`,
-        predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무'
-      };
-    }
-  });
-  
-  // 대안: rawHtmlSearch
-  if (!result) {
-    // 텍스트 기반 검색: "HomeTeam\nAwayTeam\nN - M" 패턴
-    const lines = html.replace(/<[^>]+>/g, '\n').split('\n').map(l => l.trim()).filter(Boolean);
-    for (let i = 0; i < lines.length - 2; i++) {
-      const homeMatch = aliases.some(a => lines[i].toLowerCase().includes(a.toLowerCase()));
-      if (!homeMatch) continue;
-      
-      const awayMatch = awayAliases.some(a => lines[i+1].toLowerCase().includes(a.toLowerCase()));
-      if (!awayMatch) {
-        // 같은 줄에 두 팀이 있을 수도 있음 "HomeTeam - AwayTeam"
-        const sameLine = awayAliases.some(a => lines[i].toLowerCase().includes(a.toLowerCase()));
-        if (sameLine) {
-          // 다음 줄에서 스코어 찾기
-          for (let j = i+1; j < Math.min(i+3, lines.length); j++) {
-            const sm = lines[j].match(/^(\d+)\s*[-–]\s*(\d+)$/);
-            if (sm) {
-              const hg = parseInt(sm[1]), ag = parseInt(sm[2]);
-              result = { predicted_score: `${hg}-${ag}`, predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무' };
-              break;
-            }
-          }
+  for (const listUrl of listUrls) {
+    try {
+      const resp = await fetch(listUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Accept-Language': 'en-US,en;q=0.9',
         }
-        continue;
-      }
+      });
+      if (!resp.ok) continue;
+      const html = await resp.text();
+      const $ = cheerio.load(html);
       
-      // 다음 줄들에서 스코어 찾기
-      for (let j = i+2; j < Math.min(i+5, lines.length); j++) {
-        const sm = lines[j].match(/^(\d+)\s*[-–]\s*(\d+)$/);
-        if (sm) {
-          const hg = parseInt(sm[1]), ag = parseInt(sm[2]);
-          result = { predicted_score: `${hg}-${ag}`, predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무' };
-          break;
+      $('a[href*="/football-predictions/"][href*="-vs-"]').each((_, el) => {
+        const href = $(el).attr('href') || '';
+        const title = $(el).attr('title') || $(el).text().trim();
+        if (href && title && href.includes('predictions-tips')) {
+          const fullUrl = href.startsWith('http') ? href : `https://footballpredictions.ai${href}`;
+          matchUrls.set(fullUrl, title);
         }
-      }
-      if (result) break;
+      });
+    } catch(e) {
+      console.log(`  [fpai] Failed to fetch ${listUrl}: ${e.message}`);
     }
   }
   
-  return result;
+  console.log(`  [fpai] Collected ${matchUrls.size} match URLs from listings`);
+  
+  // 2단계: DB 매치와 URL 매칭
+  const matchPairs = []; // { match, url }
+  
+  for (const match of matches) {
+    if (!match.home_team_en || !match.away_team_en) continue;
+    
+    const homeAliases = [...getAliases(match.home_team_en), match.home_team_en];
+    const awayAliases = [...getAliases(match.away_team_en), match.away_team_en];
+    
+    for (const [url, title] of matchUrls.entries()) {
+      const lowerTitle = title.toLowerCase();
+      const lowerUrl = url.toLowerCase();
+      const searchText = lowerTitle + ' ' + lowerUrl;
+      
+      const homeFound = homeAliases.some(a => searchText.includes(a.toLowerCase()));
+      const awayFound = awayAliases.some(a => searchText.includes(a.toLowerCase()));
+      
+      if (homeFound && awayFound) {
+        matchPairs.push({ match, url });
+        break;
+      }
+    }
+  }
+  
+  console.log(`  [fpai] Matched ${matchPairs.length}/${matches.length} matches to URLs`);
+  
+  // 3단계: 매칭된 경기의 개별 페이지에서 Correct Score 추출
+  let saved = 0;
+  
+  for (const { match, url } of matchPairs) {
+    try {
+      const resp = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Accept-Language': 'en-US,en;q=0.9',
+        }
+      });
+      if (!resp.ok) continue;
+      const html = await resp.text();
+      
+      const prediction = parseFpaiDetailPage(html);
+      
+      if (prediction) {
+        const result = await supabaseUpsert('predictions', {
+          match_id: match.id,
+          source: 'fpai',
+          predicted_score: prediction.predicted_score || null,
+          predicted_result: prediction.predicted_result || null,
+          confidence: prediction.confidence || null,
+          scraped_at: new Date().toISOString(),
+        }, 'match_id,source');
+        
+        if (result.ok) saved++;
+        else console.log(`  [fpai] DB error #${match.match_number}: ${result.status}`);
+      }
+      
+      // 레이트 리밋 방지: 200ms 대기
+      await new Promise(r => setTimeout(r, 200));
+    } catch(e) {
+      console.log(`  [fpai] Error fetching ${match.home_team_en} vs ${match.away_team_en}: ${e.message}`);
+    }
+  }
+  
+  return saved;
+}
+
+// 개별 매치 페이지에서 Correct Score 파싱
+function parseFpaiDetailPage(html) {
+  if (!html) return null;
+  const $ = cheerio.load(html);
+  
+  let predicted_score = null;
+  let predicted_result = null;
+  let confidence = null;
+  
+  // 전체 텍스트에서 패턴 찾기
+  const text = $('body').text();
+  
+  // Correct Score Prediction 섹션: "1 - 1\n\nOdd:7.00"
+  // 패턴: "Correct Score Prediction" 이후에 "N - M" 형태 스코어
+  const correctScoreMatch = text.match(/Correct Score Prediction[\s\S]*?(\d+)\s*[-–]\s*(\d+)[\s\S]*?Odd:\s*([\d.]+)/);
+  if (correctScoreMatch) {
+    const hg = parseInt(correctScoreMatch[1]);
+    const ag = parseInt(correctScoreMatch[2]);
+    predicted_score = `${hg}-${ag}`;
+    predicted_result = hg > ag ? '승' : hg < ag ? '패' : '무';
+  }
+  
+  // Correct Score를 못 찾으면 1x2 Prediction에서 승무패만이라도 추출
+  if (!predicted_result) {
+    // "Main Prediction" 또는 "1x2 Prediction" 이후 "1" or "X" or "2"
+    const mainMatch = text.match(/(?:Main Prediction|1x2 Prediction)\s*([1X2])\s*Odd:/);
+    if (mainMatch) {
+      const tip = mainMatch[1];
+      predicted_result = tip === '1' ? '승' : tip === '2' ? '패' : '무';
+    }
+  }
+  
+  if (!predicted_result) return null;
+  
+  return { predicted_score, predicted_result, confidence };
+}
+
+// 구 parseFpai - 목록 페이지 파싱 (하위 호환용, 더 이상 메인 플로우에서 사용하지 않음)
+function parseFpai(html, homeEn, awayEn) {
+  // scrapeFpai()에서 개별 페이지 접근으로 대체됨
+  return null;
 }
 
 // vitibet parser - with cheerio caching to avoid re-parsing 3.8MB HTML 32 times
