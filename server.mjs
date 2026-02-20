@@ -1881,16 +1881,24 @@ app.listen(PORT, () => {
   async function runFullCycle(label) {
     console.log(`=== ${label}: full cycle start ===`);
     try {
+      // 1. WiseToto에서 경기 목록
       console.log(`${label}: fetching matches from WiseToto...`);
       await doFetchMatches();
-      await new Promise(r => setTimeout(r, 30000));
+      // 메모리 해제: 60초 대기 + GC
+      if (global.gc) { global.gc(); console.log('  GC triggered'); }
+      await new Promise(r => setTimeout(r, 60000));
       
+      // 2. 예측 스크래핑
       console.log(`${label}: scraping predictions...`);
       await doScrapeAndSave();
-      await new Promise(r => setTimeout(r, 30000));
+      // 메모리 해제: 60초 대기 + GC
+      if (global.gc) { global.gc(); console.log('  GC triggered'); }
+      await new Promise(r => setTimeout(r, 60000));
       
+      // 3. WiseToto 결과 업데이트
       console.log(`${label}: updating match results...`);
       await doFetchMatches();
+      if (global.gc) global.gc();
       console.log(`=== ${label}: full cycle complete ===`);
     } catch (e) {
       console.error(`${label} error:`, e.message);
