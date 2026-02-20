@@ -1850,13 +1850,20 @@ app.listen(PORT, () => {
     }
   }, 10000);
   
-  // 2시간마다 자동 실행 (예측 스크래핑 + 경기 결과 수집)
+  // 2시간마다 자동 실행
   const TWO_HOURS = 2 * 60 * 60 * 1000;
   setInterval(async () => {
     try {
       console.log('=== Scheduled run (every 2h) ===');
+      // 1. WiseToto에서 경기 목록 가져오기 (새 회차 자동 감지)
+      console.log('Scheduled: fetching matches from WiseToto...');
+      await doFetchMatches();
+      await new Promise(r => setTimeout(r, 5000));
+      // 2. 예측 스크래핑 (DB 최신 회차 기준)
+      console.log('Scheduled: scraping predictions...');
       await doScrapeAndSave();
-      console.log('Scheduled: fetching match results from WiseToto...');
+      // 3. WiseToto 결과 업데이트 (스코어/배당)
+      console.log('Scheduled: updating match results...');
       await doFetchMatches();
       console.log('=== Scheduled run complete ===');
     } catch (e) {
