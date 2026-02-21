@@ -181,6 +181,15 @@ async function doScrapeAndSave() {
   try {
     console.log('=== Starting scrape & save ===');
 
+    // 0. 와이즈토토에서 결과 업데이트 (경기 종료 후 결과 반영)
+    console.log('  Updating match results from WiseToto...');
+    try {
+      await doFetchMatches(false); // lightweight fetch로 결과만 업데이트
+      console.log('  Match results updated');
+    } catch (e) {
+      console.log(`  Result update skipped: ${e.message}`);
+    }
+
     // 1. DB에서 최신 회차 가져오기
     const latest = await supabaseGet('proto_matches',
       'match_type=eq.normal&order=round_number.desc&limit=1&select=round_year,round_number');
@@ -197,6 +206,20 @@ async function doScrapeAndSave() {
       `round_year=eq.${round_year}&round_number=eq.${round_number}&match_type=eq.normal&order=match_number&select=*`);
 
     console.log(`Found ${matches?.length || 0} matches`);
+
+    // 1.5 비티벳 이전 잘못된 데이터 정리 (score가 실제결과와 동일한 이상한 데이터 삭제)
+    if (matches?.length) {
+      const matchIds = matches.map(m => m.id).join(',');
+      try {
+        const delResp = await fetch(
+          `${SUPABASE_URL}/rest/v1/predictions?source=eq.vitibet&match_id=in.(${matchIds})`,
+          { method: 'DELETE', headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=representation' } }
+        );
+        console.log(`  Cleared old vitibet predictions: ${delResp.status}`);
+      } catch (e) {
+        console.log(`  Vitibet cleanup skipped: ${e.message}`);
+      }
+    }
 
     // 2. 각 사이트를 하나씩 가져오고, 파싱하고, HTML 해제 (메모리 절약)
     // 프로토 경기는 수목금에 걸쳐있으므로 today + tomorrow + weekend 모두 가져와야 함
@@ -862,7 +885,7 @@ async function scrapeFpai(matches) {
     
     for (const [url, title] of matchUrls.entries()) {
       const lowerTitle = title.toLowerCase();
-      const lowerUrl = url.toLowerCase();
+      const lowerUrl = url.toLowerCase().replace(/-/g, ' '); // 하이픈을 공백으로 변환하여 매칭
       const searchText = lowerTitle + ' ' + lowerUrl;
       
       const homeFound = homeAliases.some(a => searchText.includes(a.toLowerCase()));
