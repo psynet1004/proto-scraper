@@ -213,7 +213,7 @@ async function doScrapeAndSave() {
           await wp.setRequestInterception(true);
           wp.on('request', req => { ['image','font','stylesheet','media'].includes(req.resourceType()) ? req.abort() : req.continue(); });
           await wp.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
-          await wp.goto(wisetotoUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+          await wp.goto(wisetotoUrl, { waitUntil: 'networkidle2', timeout: 90000 });
           await new Promise(r => setTimeout(r, 3000));
           wiseHtml = await wp.content();
           await wp.close();
