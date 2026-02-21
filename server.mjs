@@ -184,8 +184,105 @@ async function doScrapeAndSave() {
     // 0. 와이즈토토에서 결과 업데이트 (경기 종료 후 결과 반영)
     console.log('  Updating match results from WiseToto...');
     try {
-      await doFetchMatches(false); // lightweight fetch로 결과만 업데이트
-      console.log('  Match results updated');
+      // 와이즈토토 페이지를 Puppeteer로 가져와서 결과 파싱
+      let wiseHtml = '';
+      const wisetotoUrl = 'https://www.wisetoto.com/index.htm?tab_type=proto&game_type=pt&game_category=pt1';
+      
+      // 먼저 lightweight fetch 시도
+      try {
+        const resp = await fetch(wisetotoUrl, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Accept-Language': 'ko-KR,ko;q=0.9' },
+          signal: AbortSignal.timeout(15000),
+        });
+        wiseHtml = await resp.text();
+      } catch(e) {}
+      
+      const hasData = wiseHtml.includes('class="a1"');
+      
+      if (!hasData) {
+        // Puppeteer 사용
+        console.log('  Using Puppeteer for WiseToto results...');
+        let wb = null;
+        try {
+          wb = await puppeteer.launch({
+            headless: 'new',
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--single-process', '--no-zygote'],
+          });
+          const wp = await wb.newPage();
+          await wp.setRequestInterception(true);
+          wp.on('request', req => { ['image','font','stylesheet','media'].includes(req.resourceType()) ? req.abort() : req.continue(); });
+          await wp.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+          await wp.goto(wisetotoUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+          await new Promise(r => setTimeout(r, 3000));
+          wiseHtml = await wp.content();
+          await wp.close();
+        } catch(e) { console.log(`  Puppeteer failed: ${e.message}`); }
+        finally { if (wb) try { await wb.close(); } catch(e) {} wb = null; }
+      }
+      
+      // 결과 파싱 & DB 업데이트
+      if (wiseHtml.includes('class="a1"')) {
+        const $ = cheerio.load(wiseHtml);
+        let updated = 0;
+        
+        for (const match of matches) {
+          const matchNum = match.match_number;
+          // 이미 결과 있으면 스킵
+          if (match.actual_home_score !== null && match.actual_home_score !== undefined) continue;
+          
+          // 해당 경기번호의 ul 찾기
+          $('ul').each((_, ul) => {
+            const $ul = $(ul);
+            const numEl = $ul.find('li.a1');
+            if (!numEl.length) return;
+            const num = parseInt(numEl.text().trim());
+            if (num !== matchNum) return;
+            
+            const a6 = $ul.find('li.a6');
+            const a8 = $ul.find('li.a8');
+            const homeScore = a6.find('span.win, span.lose, span.draw');
+            const awayScore = a8.find('span.win, span.lose, span.draw');
+            
+            if (homeScore.length && awayScore.length) {
+              const hs = parseInt(homeScore.text().trim());
+              const as = parseInt(awayScore.text().trim());
+              if (!isNaN(hs) && !isNaN(as)) {
+                const result = hs > as ? '승' : hs < as ? '패' : '무';
+                
+                // 배당도 파싱
+                const oddsEls = $ul.find('li.a9');
+                const patchData = { actual_home_score: hs, actual_away_score: as, actual_result: result };
+                if (oddsEls.length >= 3) {
+                  const o1 = parseFloat($(oddsEls[0]).find('span.pt').text().trim());
+                  const o2 = parseFloat($(oddsEls[1]).find('span.pt').text().trim());
+                  const o3 = parseFloat($(oddsEls[2]).find('span.pt').text().trim());
+                  if (o1 > 0) patchData.odds_home = o1;
+                  if (o2 > 0) patchData.odds_draw = o2;
+                  if (o3 > 0) patchData.odds_away = o3;
+                }
+                
+                // DB 업데이트
+                fetch(`${SUPABASE_URL}/rest/v1/proto_matches?id=eq.${match.id}`, {
+                  method: 'PATCH',
+                  headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+                  body: JSON.stringify(patchData),
+                }).then(() => {}).catch(() => {});
+                
+                // 로컬 매치 객체도 업데이트 (이후 hit 계산용)
+                match.actual_home_score = hs;
+                match.actual_away_score = as;
+                match.actual_result = result;
+                updated++;
+                console.log(`    Result: #${matchNum} ${hs}-${as} ${result}`);
+              }
+            }
+          });
+        }
+        console.log(`  Updated ${updated} match results`);
+      } else {
+        console.log('  No match data available from WiseToto');
+      }
     } catch (e) {
       console.log(`  Result update skipped: ${e.message}`);
     }
