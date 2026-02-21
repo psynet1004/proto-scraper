@@ -257,7 +257,17 @@ async function doScrapeAndSave() {
           
           let pageHtml = '';
           try {
-            pageHtml = await getPage(url, src.wait, 60000, src.extraWait || 0, src.humanize || false);
+            // vitibet: CF 보호 없으므로 native fetch 사용 (Puppeteer 타임아웃 방지)
+            if (src.name === 'vitibet') {
+              const resp = await fetch(url, {
+                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
+                signal: AbortSignal.timeout(15000),
+              });
+              if (resp.ok) pageHtml = await resp.text();
+              else throw new Error(`HTTP ${resp.status}`);
+            } else {
+              pageHtml = await getPage(url, src.wait, 60000, src.extraWait || 0, src.humanize || false);
+            }
             console.log(`  ${label}: ${pageHtml.length} chars`);
           } catch (e) {
             console.log(`  ${label}: FAILED - ${e.message}`);
