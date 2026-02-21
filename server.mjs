@@ -960,9 +960,15 @@ function parseFpai(html, homeEn, awayEn) {
   return null;
 }
 
-// vitibet parser - with cheerio caching to avoid re-parsing 3.8MB HTML 32 times
-// 중요: vitibet tips 페이지의 score 컬럼은 "실제 경기 결과"이므로 예측 스코어로 사용하면 안됨!
-// vitibet은 예측 스코어를 제공하지 않음 - tip 컬럼(1/X/2)만 예측으로 사용
+// vitibet parser - with cheerio caching to avoid re-parsing 4.5MB HTML
+// HTML 구조 (tips 페이지):
+//   td.vetsipismo = 예측 스코어 홈골
+//   td.standardbunka " : " = 구분자
+//   td.vetsipismo = 예측 스코어 원정골
+//   td.standardbunka "17 %" = 1 확률
+//   td.standardbunka "22 %" = X 확률
+//   td.standardbunka "62 %" = 2 확률
+//   td.barvapodtipek2 = tip (1/2/X)
 let _vitibetCache = { html: null, $: null };
 function parseVitibet(html, homeEn, awayEn) {
   let $;
@@ -979,45 +985,75 @@ function parseVitibet(html, homeEn, awayEn) {
     const text = $(row).text();
     if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
 
-    // vitibet은 예측 스코어를 제공하지 않음 (score 컬럼은 실제 결과!)
-    // tip 컬럼에서 1/X/2만 추출
     const tds = [];
     $(row).find('td').each((_, td) => {
-      const t = $(td).text().trim();
-      const cls = $(td).attr('class') || '';
-      const style = $(td).attr('style') || '';
-      const bg = $(td).attr('bgcolor') || '';
-      tds.push({ text: t, class: cls, style: style, bg: bg });
+      tds.push({
+        text: $(td).text().trim(),
+        class: $(td).attr('class') || '',
+        width: $(td).attr('width') || '',
+      });
     });
 
-    // 방법 1: 배경색이 있는 td에서 tip 값 찾기 (vitibet tips 페이지 특징)
-    for (const td of tds) {
-      if (result) break;
-      const hasBg = td.bg || td.style.includes('background') || td.class.includes('green') || td.class.includes('red') || td.class.includes('tip');
-      if (hasBg) {
-        const tip = td.text.trim();
-        if (tip === '1' || tip === '01' || tip === '10') {
-          result = { predicted_score: null, predicted_result: tip === '2' || tip === '02' ? '패' : tip === 'X' || tip === '0X' || tip === 'X0' ? '무' : '승' };
+    // 방법 1: vetsipismo 클래스에서 예측 스코어 추출 (tips 페이지)
+    let homeGoals = null, awayGoals = null;
+    let foundColon = false;
+    for (let i = 0; i < tds.length; i++) {
+      const td = tds[i];
+      if (td.class.includes('vetsipismo') && /^\d+$/.test(td.text)) {
+        if (homeGoals === null) {
+          homeGoals = parseInt(td.text);
+        } else if (foundColon) {
+          awayGoals = parseInt(td.text);
+          break;
         }
-        if (tip === '1') result = { predicted_score: null, predicted_result: '승' };
-        else if (tip === '2') result = { predicted_score: null, predicted_result: '패' };
-        else if (tip === '10' || tip === '01') result = { predicted_score: null, predicted_result: '승' };
-        else if (tip === '02' || tip === '20') result = { predicted_score: null, predicted_result: '패' };
-        else if (tip === '0X' || tip === 'X0' || tip === '1X' || tip === 'X1') result = { predicted_score: null, predicted_result: '무' };
-        else if (tip.toUpperCase() === 'X') result = { predicted_score: null, predicted_result: '무' };
+      }
+      if (td.text === ':' && homeGoals !== null) {
+        foundColon = true;
       }
     }
 
-    // 방법 2: 마지막 td들에서 1/2/X 찾기 (quicktips 페이지)
+    if (homeGoals !== null && awayGoals !== null) {
+      result = {
+        predicted_score: `${homeGoals}-${awayGoals}`,
+        predicted_result: homeGoals > awayGoals ? '승' : homeGoals < awayGoals ? '패' : '무',
+      };
+      return;
+    }
+
+    // 방법 2: td 시퀀스에서 "숫자 : 숫자" 패턴 (vetsipismo 클래스 없는 경우)
+    for (let i = 0; i < tds.length - 2; i++) {
+      const a = tds[i].text, sep = tds[i+1].text, b = tds[i+2].text;
+      if (/^\d+$/.test(a) && sep === ':' && /^\d+$/.test(b)) {
+        const hg = parseInt(a), ag = parseInt(b);
+        if (hg < 20 && ag < 20) {
+          result = {
+            predicted_score: `${hg}-${ag}`,
+            predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
+          };
+          return;
+        }
+      }
+    }
+
+    // 방법 3: barvapodtipek 클래스에서 tip만 추출 (스코어 없는 quicktips 페이지)
+    for (const td of tds) {
+      if (result) break;
+      if (td.class.includes('barvapodtipek') || td.class.includes('tip')) {
+        const tip = td.text.trim();
+        if (tip === '1' || tip === '10' || tip === '01') { result = { predicted_score: null, predicted_result: '승' }; }
+        else if (tip === '2' || tip === '20' || tip === '02') { result = { predicted_score: null, predicted_result: '패' }; }
+        else if (tip.toUpperCase() === 'X' || tip === '0X' || tip === 'X0') { result = { predicted_score: null, predicted_result: '무' }; }
+      }
+    }
+
+    // 방법 4: 마지막 td에서 1/2/X (최후 fallback)
     if (!result) {
       for (const td of [...tds].reverse()) {
         if (result) break;
         const t = td.text;
-        if (t === '1' || t === '01') { result = { predicted_score: null, predicted_result: '승' }; break; }
-        if (t === '2' || t === '02') { result = { predicted_score: null, predicted_result: '패' }; break; }
-        if (t.toUpperCase() === 'X') { result = { predicted_score: null, predicted_result: '무' }; break; }
-        if (t === '10') { result = { predicted_score: null, predicted_result: '승' }; break; }
-        if (t === '20') { result = { predicted_score: null, predicted_result: '패' }; break; }
+        if (t === '1') { result = { predicted_score: null, predicted_result: '승' }; }
+        else if (t === '2') { result = { predicted_score: null, predicted_result: '패' }; }
+        else if (t.toUpperCase() === 'X') { result = { predicted_score: null, predicted_result: '무' }; }
       }
     }
   });
