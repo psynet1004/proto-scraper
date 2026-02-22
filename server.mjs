@@ -1599,11 +1599,19 @@ const LEAGUE_MAP = {
 
 // ====== FETCH MATCHES FROM WISETOTO ======
 app.get('/fetch-matches', auth, async (req, res) => {
+  if (isRunning) return res.json({ error: 'Scraping in progress, try again later' });
+  if (isFetchingMatches) return res.json({ error: 'Already fetching matches' });
   res.json({ message: 'Fetching matches started (with Puppeteer)', timestamp: new Date().toISOString() });
   doFetchMatches(true).catch(e => console.error('Fetch matches error:', e.message));
 });
 
+let isFetchingMatches = false;
+
 async function doFetchMatches(usePuppeteer = false) {
+  if (isFetchingMatches) { console.log('  doFetchMatches already running, skip'); return; }
+  if (isRunning) { console.log('  Scraping in progress, skip fetch-matches'); return; }
+  isFetchingMatches = true;
+  try {
   console.log('=== Fetching matches from WiseToto ===');
   
   let html = '';
@@ -1850,6 +1858,9 @@ async function doFetchMatches(usePuppeteer = false) {
   } catch (e) {
     console.error('Fetch matches error:', e.message);
   }
+  } finally {
+    isFetchingMatches = false;
+  }
 }
 
 // ====== START ======
@@ -1961,10 +1972,20 @@ app.listen(PORT, () => {
   async function runFullCycle(label) {
     console.log(`=== ${label}: full cycle start ===`);
     try {
-      // 예측 스크래핑만 실행 (Puppeteer 1회만 사용 → 메모리 안전)
+      // 1단계: 예측 스크래핑
       console.log(`${label}: scraping predictions...`);
       await doScrapeAndSave();
       if (global.gc) { global.gc(); console.log('  GC triggered'); }
+      
+      // 2단계: 와이즈토토 결과 수집 (Puppeteer - 예측 완료 후 순차 실행)
+      console.log(`${label}: fetching match results...`);
+      try {
+        await doFetchMatches(true);
+      } catch(e) {
+        console.log(`  Result fetch failed: ${e.message}`);
+      }
+      if (global.gc) { global.gc(); console.log('  GC triggered'); }
+      
       console.log(`=== ${label}: full cycle complete ===`);
     } catch (e) {
       console.error(`${label} error:`, e.message);
