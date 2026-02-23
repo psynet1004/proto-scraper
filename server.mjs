@@ -1679,18 +1679,20 @@ app.get('/debug-html', auth, async (req, res) => {
 app.get('/fetch-matches', auth, async (req, res) => {
   if (isRunning) return res.json({ error: 'Scraping in progress, try again later' });
   if (isFetchingMatches) return res.json({ error: 'Already fetching matches' });
-  res.json({ message: 'Fetching matches started (lightweight via zentoto)', timestamp: new Date().toISOString() });
-  doFetchMatches().catch(e => console.error('Fetch matches error:', e.message));
+  const roundParam = req.query.round; // e.g. "23" for specific round
+  const urlParam = req.query.url; // e.g. "games" to use /proto/games
+  res.json({ message: `Fetching matches started${roundParam ? ` (round ${roundParam})` : ''}`, timestamp: new Date().toISOString() });
+  doFetchMatches(roundParam ? parseInt(roundParam) : null, urlParam).catch(e => console.error('Fetch matches error:', e.message));
 });
 
 let isFetchingMatches = false;
 
-async function doFetchMatches() {
+async function doFetchMatches(overrideRound = null, urlVariant = null) {
   if (isFetchingMatches) { console.log('  doFetchMatches already running, skip'); return; }
   if (isRunning) { console.log('  Scraping in progress, skip fetch-matches'); return; }
   isFetchingMatches = true;
   try {
-    console.log('=== Fetching match results (no Puppeteer) ===');
+    console.log(`=== Fetching match results (no Puppeteer)${overrideRound ? ` [round ${overrideRound}]` : ''} ===`);
     
     let html = '';
     let source = '';
@@ -1710,6 +1712,12 @@ async function doFetchMatches() {
       const rm = wtHtml.match(/(\d{4})년도.*?(\d+)회차/s) || wtHtml.match(/game_year=(\d{4})&game_round=(\d+)/);
       if (rm) { roundYear = rm[1]; roundNumber = parseInt(rm[2]); }
       console.log(`  Current round: ${roundYear}-${roundNumber || '?'}`);
+      
+      // overrideRound가 있으면 강제 지정
+      if (overrideRound) {
+        roundNumber = overrideRound;
+        console.log(`  Override round: ${roundYear}-${roundNumber}`);
+      }
       
       // WiseToto HTML에 tr#TRID 또는 class="f11px_gray6" 가 있으면 SSR 데이터 있음!
       if (wtHtml.includes('id="TRID"') || wtHtml.includes('f12px_orange')) {
@@ -1743,26 +1751,33 @@ async function doFetchMatches() {
       }
     }
     
-    // 3단계: 젠토토 시도 (fallback)
+    // 3단계: 젠토토 시도 - /proto/games (이전 회차 결과 포함) 와 /proto 둘 다 시도
     if (!source) {
-      try {
-        console.log('  Trying Zentoto...');
-        const zResp = await fetch('https://www.zentoto.com/proto', {
-          headers: HEADERS, signal: AbortSignal.timeout(30000),
-        });
-        const zHtml = await zResp.text();
-        console.log(`  Zentoto: ${zHtml.length} chars`);
-        
-        const z$ = cheerio.load(zHtml);
-        if (z$('table tr td').length > 50) {
-          html = zHtml;
-          source = 'zentoto';
-          console.log('  Zentoto has data');
-        } else {
-          console.log('  Zentoto: no data (JS rendering)');
+      const zentotoUrls = urlVariant === 'games' 
+        ? ['https://www.zentoto.com/proto/games']
+        : ['https://www.zentoto.com/proto/games', 'https://www.zentoto.com/proto'];
+      
+      for (const zUrl of zentotoUrls) {
+        try {
+          console.log(`  Trying Zentoto (${zUrl.split('/').pop()})...`);
+          const zResp = await fetch(zUrl, {
+            headers: HEADERS, signal: AbortSignal.timeout(30000),
+          });
+          const zHtml = await zResp.text();
+          console.log(`  Zentoto: ${zHtml.length} chars`);
+          
+          const z$ = cheerio.load(zHtml);
+          if (z$('table tr td').length > 50) {
+            html = zHtml;
+            source = 'zentoto';
+            console.log('  Zentoto has data');
+            break;
+          } else {
+            console.log('  Zentoto: no data (JS rendering)');
+          }
+        } catch (e) {
+          console.log(`  Zentoto fetch failed: ${e.message}`);
         }
-      } catch (e) {
-        console.log(`  Zentoto fetch failed: ${e.message}`);
       }
     }
     
