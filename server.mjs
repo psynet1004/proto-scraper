@@ -1597,208 +1597,158 @@ const LEAGUE_MAP = {
   'DFB포칼': 'DFBPokal',
 };
 
-// ====== FETCH MATCHES FROM WISETOTO ======
+// ====== FETCH MATCHES FROM ZENTOTO (lightweight, no Puppeteer!) ======
 app.get('/fetch-matches', auth, async (req, res) => {
   if (isRunning) return res.json({ error: 'Scraping in progress, try again later' });
   if (isFetchingMatches) return res.json({ error: 'Already fetching matches' });
-  res.json({ message: 'Fetching matches started (with Puppeteer)', timestamp: new Date().toISOString() });
-  doFetchMatches(true).catch(e => console.error('Fetch matches error:', e.message));
+  res.json({ message: 'Fetching matches started (lightweight via zentoto)', timestamp: new Date().toISOString() });
+  doFetchMatches().catch(e => console.error('Fetch matches error:', e.message));
 });
 
 let isFetchingMatches = false;
 
-async function doFetchMatches(usePuppeteer = false) {
+async function doFetchMatches() {
   if (isFetchingMatches) { console.log('  doFetchMatches already running, skip'); return; }
   if (isRunning) { console.log('  Scraping in progress, skip fetch-matches'); return; }
   isFetchingMatches = true;
   try {
-  console.log('=== Fetching matches from WiseToto ===');
-  
-  let html = '';
-  const wisetotoUrl = 'https://www.wisetoto.com/index.htm?tab_type=proto&game_type=pt&game_category=pt1';
-  
-  // 1단계: 가벼운 fetch (회차 감지 + 가능하면 데이터도)
-  try {
-    console.log('  Trying lightweight fetch...');
-    const resp = await fetch(wisetotoUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml',
-        'Accept-Language': 'ko-KR,ko;q=0.9',
-      },
-      signal: AbortSignal.timeout(30000),
-    });
-    html = await resp.text();
-    console.log(`  Fetch OK: ${html.length} chars`);
-  } catch (e) {
-    console.log(`  Lightweight fetch failed: ${e.message}`);
-  }
-  
-  // fetch HTML에서 회차 추출
-  let roundYear = new Date().getFullYear().toString();
-  let roundNumber = null;
-  if (html.length > 1000) {
-    const rm = html.match(/(\d{4})년도.*?(\d+)회차/s) || html.match(/game_year=(\d{4})&game_round=(\d+)/);
-    if (rm) { roundYear = rm[1]; roundNumber = parseInt(rm[2]); }
-    console.log(`  Fetch detected round: ${roundYear}-${roundNumber || '?'}`);
-  }
-  
-  // fetch HTML에 경기 데이터가 있는지 확인 (li.a1 = 경기번호)
-  const hasMatchData = html.includes('class="a1"') || html.includes('class=\\"a1\\"');
-  
-  // 2단계: Puppeteer (수동 호출 시만 OR fetch에 데이터 없을 때)
-  if (usePuppeteer && !hasMatchData) {
-    console.log('  Using Puppeteer for full data...');
-    let b = null;
+    console.log('=== Fetching matches from Zentoto (no Puppeteer) ===');
+    
+    // 1단계: 젠토토 프로토 페이지 fetch (가벼운 HTML)
+    const zentotoUrl = 'https://www.zentoto.com/proto';
+    let html = '';
     try {
-      b = await puppeteer.launch({
-        headless: 'new',
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--single-process', '--no-zygote'],
+      console.log('  Fetching zentoto.com/proto...');
+      const resp = await fetch(zentotoUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml',
+          'Accept-Language': 'ko-KR,ko;q=0.9',
+        },
+        signal: AbortSignal.timeout(30000),
       });
-      const page = await b.newPage();
-      await page.setRequestInterception(true);
-      page.on('request', req => {
-        const t = req.resourceType();
-        if (['image', 'font', 'stylesheet', 'media'].includes(t)) req.abort();
-        else req.continue();
-      });
-      await page.setViewport({ width: 1280, height: 720 });
-      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
-      
-      await page.goto(wisetotoUrl, { waitUntil: 'networkidle2', timeout: 90000 });
-      await new Promise(r => setTimeout(r, 5000));
-      
-      try {
-        await page.evaluate(() => {
-          const btn = document.querySelector('a.btn.soccer, a[title="축구"]');
-          if (btn) btn.click();
-        });
-        await new Promise(r => setTimeout(r, 3000));
-      } catch (e) {}
-      
-      html = await page.content();
-      await page.close();
-      console.log(`  Puppeteer OK: ${html.length} chars`);
+      html = await resp.text();
+      console.log(`  Zentoto OK: ${html.length} chars`);
     } catch (e) {
-      console.error(`  Puppeteer failed: ${e.message}`);
-    } finally {
-      if (b) try { await b.close(); } catch(e) {}
+      console.error(`  Zentoto fetch failed: ${e.message}`);
+      return;
     }
-  } else if (!hasMatchData) {
-    console.log('  No match data in fetch HTML, skipping Puppeteer (auto mode)');
-    console.log('  Use /fetch-matches endpoint manually to load match data with Puppeteer');
-    return;
-  }
-  
-  // 이하 파싱 로직 (기존과 동일)
-  try {
-
-    // 4. 회차 정보 파싱
+    
+    if (html.length < 1000) {
+      console.log('  Zentoto returned too little data, aborting');
+      return;
+    }
+    
+    // 2단계: HTML 파싱
     const $ = cheerio.load(html);
     
+    // 회차 정보 추출 - 젠토토 HTML에서 찾기
     let roundYear = new Date().getFullYear().toString();
     let roundNumber = null;
     
-    // "2026년도" / "22회차" 텍스트에서 추출
-    const roundMatch = html.match(/(\d{4})년도.*?(\d+)회차/s) || html.match(/game_year=(\d{4})&game_round=(\d+)/);
+    // "23회차" 등의 텍스트에서 추출
+    const roundMatch = html.match(/(\d{4})년도.*?(\d+)회차/s) || html.match(/(\d+)회차/);
     if (roundMatch) {
-      roundYear = roundMatch[1];
-      roundNumber = parseInt(roundMatch[2]);
+      if (roundMatch[2]) {
+        roundYear = roundMatch[1];
+        roundNumber = parseInt(roundMatch[2]);
+      } else {
+        roundNumber = parseInt(roundMatch[1]);
+      }
     }
     
-    // fallback: select option에서 찾기
+    // fallback: WiseToto에서 회차만 가져오기 (가벼운 fetch)
     if (!roundNumber) {
-      $('select option[selected], .round_select option[selected]').each((_, el) => {
-        const t = $(el).text().trim();
-        const m = t.match(/(\d+)회차/);
-        if (m) roundNumber = parseInt(m[1]);
-      });
-    }
-    
-    // fallback 2: "22회차 발매중" 같은 텍스트에서 추출
-    if (!roundNumber) {
-      const saleMatch = html.match(/승부식\s*(\d+)회차\s*발매/);
-      if (saleMatch) roundNumber = parseInt(saleMatch[1]);
+      try {
+        const wtResp = await fetch('https://www.wisetoto.com/index.htm?tab_type=proto&game_type=pt&game_category=pt1', {
+          headers: { 'User-Agent': 'Mozilla/5.0', 'Accept-Language': 'ko-KR,ko;q=0.9' },
+          signal: AbortSignal.timeout(15000),
+        });
+        const wtHtml = await wtResp.text();
+        const rm = wtHtml.match(/(\d{4})년도.*?(\d+)회차/s) || wtHtml.match(/game_year=(\d{4})&game_round=(\d+)/);
+        if (rm) { roundYear = rm[1]; roundNumber = parseInt(rm[2]); }
+        console.log(`  WiseToto round fallback: ${roundYear}-${roundNumber || '?'}`);
+      } catch (e) {
+        console.log(`  WiseToto round fallback failed: ${e.message}`);
+      }
     }
     
     console.log(`  Round: ${roundYear}-${roundNumber || '?'}`);
-
-    // 5. 경기 목록 파싱 (WiseToto는 ul/li 구조)
+    
+    // 3단계: 테이블에서 경기 데이터 파싱
+    // 젠토토 구조: <table> 내 <tr> 행들, No | League | Time | HOME vs AWAY | Type | 승 | 무 | 패 | ...
     const matches = [];
     const seenTeams = new Set();
     let debugCount = 0;
     
-    $('ul').each((_, ul) => {
-      const $ul = $(ul);
-      const noEl = $ul.find('li.a1');
-      if (!noEl.length) return;
+    $('table tr, tbody tr').each((_, tr) => {
+      const $tr = $(tr);
+      const cells = $tr.find('td');
+      if (cells.length < 4) return;
       
-      const matchNum = parseInt(noEl.text().trim());
-      if (isNaN(matchNum)) return;
+      // No 컬럼 (첫 번째 td) - "1 3" 형식 (메인번호 + 서브번호) 또는 단순 숫자
+      const noText = $(cells[0]).text().trim();
+      const noMatch = noText.match(/^(\d+)/);
+      if (!noMatch) return;
+      const matchNum = parseInt(noMatch[1]);
+      if (isNaN(matchNum) || matchNum < 1) return;
       
-      // 디버그: 처음 10개 행의 모든 li 클래스와 텍스트 출력
-      if (debugCount < 3) {
-        const liInfo = [];
-        $ul.find('li').each((_, li) => {
-          const cls = $(li).attr('class') || 'no-class';
-          const txt = $(li).text().trim().substring(0, 30);
-          liInfo.push(`${cls}="${txt}"`);
-        });
-        console.log(`    [debug] Match ${matchNum}: ${liInfo.join(' | ')}`);
-        debugCount++;
-      }
+      // League 컬럼 (두 번째 td)
+      const league = $(cells[1]).text().trim();
       
-      // 유형 필터: hp(핸디), un(언오버), d5(합계)가 있으면 제외 → 일반 승무패만
-      const hasHp = $ul.find('li.hp').length > 0 || $ul.find('li[class*="hp"]').length > 0;
-      const hasUn = $ul.find('li.un').length > 0 || $ul.find('li[class*="un"]').length > 0;
-      const hasD5 = $ul.find('li.d5').length > 0;
-      if (hasHp || hasUn || hasD5) return;
+      // Type 컬럼 - 승무패(일반)만 필터: H-, U/O, 승5패, NONE 등은 제외
+      const typeText = $(cells[4]) ? $(cells[4]).text().trim() : '';
+      if (typeText && (typeText.includes('H-') || typeText.includes('H+') || typeText.includes('U/O') || typeText.includes('승5패') || typeText === 'NONE')) return;
       
-      // hm이 있어야 일반 승무패
-      const hasHm = $ul.find('li.hm').length > 0;
-      if (!hasHm) return;
+      // HOME vs AWAY 컬럼 (네 번째 td)
+      // 형식: "애들유나  4  :  0  퍼스글로" 또는 "애들유나  vs  퍼스글로"
+      const matchCell = $(cells[3]).text().trim();
       
-      // 리그
-      const league = $ul.find('li.a4').text().trim().replace(/[⚽🏀🏐⚾]/g, '').trim();
-      
-      // 홈팀명 + 홈스코어
-      const a6 = $ul.find('li.a6');
-      const homeKr = a6.find('span.tn').text().trim() || a6.find('span.tnb').text().trim();
-      
-      // 원정팀명 + 원정스코어
-      const a8 = $ul.find('li.a8');
-      const awayKr = a8.find('span.tnb').text().trim() || a8.find('span.tn').text().trim();
-      
-      if (!homeKr || !awayKr) return;
-      
-      // 경기 결과(스코어) 파싱
+      // 스코어가 있는 경우: "홈팀  숫자  :  숫자  원정팀"
+      let homeKr = '', awayKr = '';
       let actualHomeScore = null, actualAwayScore = null, actualResult = null;
-      const homeScoreEl = a6.find('span.win, span.lose, span.draw');
-      const awayScoreEl = a8.find('span.win, span.lose, span.draw');
-      if (homeScoreEl.length && awayScoreEl.length) {
-        actualHomeScore = parseInt(homeScoreEl.text().trim());
-        actualAwayScore = parseInt(awayScoreEl.text().trim());
+      
+      const scoreMatch = matchCell.match(/^(.+?)\s+(\d+)\s*:\s*(\d+)\s+(.+)$/);
+      if (scoreMatch) {
+        homeKr = scoreMatch[1].trim();
+        actualHomeScore = parseInt(scoreMatch[2]);
+        actualAwayScore = parseInt(scoreMatch[3]);
+        awayKr = scoreMatch[4].trim();
         if (!isNaN(actualHomeScore) && !isNaN(actualAwayScore)) {
           actualResult = actualHomeScore > actualAwayScore ? '승' : actualHomeScore < actualAwayScore ? '패' : '무';
         }
+      } else {
+        // 스코어 없는 경우: "홈팀  vs  원정팀" 또는 "홈팀  -  :  -  원정팀"
+        const vsMatch = matchCell.match(/^(.+?)\s+(?:vs|-\s*:\s*-)\s+(.+)$/);
+        if (vsMatch) {
+          homeKr = vsMatch[1].trim();
+          awayKr = vsMatch[2].trim();
+        }
       }
       
-      // 배당 파싱 (a9 li가 3개)
-      const oddsEls = $ul.find('li.a9');
-      let oddsHome = null, oddsDraw = null, oddsAway = null;
-      if (oddsEls.length >= 3) {
-        const o1 = parseFloat($(oddsEls[0]).find('span.pt').text().trim());
-        const o2 = parseFloat($(oddsEls[1]).find('span.pt').text().trim());
-        const o3 = parseFloat($(oddsEls[2]).find('span.pt').text().trim());
-        if (o1 > 0) oddsHome = o1;
-        if (o2 > 0) oddsDraw = o2;
-        if (o3 > 0) oddsAway = o3;
-      }
+      if (!homeKr || !awayKr) return;
+      
+      // 축구 리그만 필터 (NBA, WKBL, KOVO 등 제외)
+      const soccerLeagues = ['A리그', '에레디비', '분데스리', '분데스2', '세리에A', '세리에B', '프리그1', '리그1', '리그2',
+        'EFL챔', 'EFL챔피', '라리가', '라리가2', '프리미어', 'EPL', 'J1백년', 'J2백년', 'J1리그', 'J2리그',
+        'UEFA유로', 'UEFA챔', 'FA컵', '코파델레', '국왕컵', 'DFB포칼'];
+      const isSoccer = soccerLeagues.some(l => league.includes(l)) || 
+        !['NBA', 'WKBL', 'KBL', 'KOVO남', 'KOVO여', 'KBO', 'MLB', 'NPB', 'NHL', 'NFL'].some(l => league.includes(l));
+      if (!isSoccer) return;
+      
+      // 같은 홈팀 vs 원정팀 조합이 이미 있으면 제외
+      const teamKey = `${homeKr}_${awayKr}`;
+      if (seenTeams.has(teamKey)) return;
+      seenTeams.add(teamKey);
       
       const homeEn = TEAM_MAP[homeKr] || '';
       const awayEn = TEAM_MAP[awayKr] || '';
       const leagueDb = LEAGUE_MAP[league] || league;
+      
+      if (debugCount < 5) {
+        console.log(`    [debug] No ${matchNum}: ${league} | ${homeKr} vs ${awayKr} | score: ${actualHomeScore}:${actualAwayScore} | type: "${typeText}"`);
+        debugCount++;
+      }
       
       const matchData = {
         round_year: roundYear,
@@ -1813,28 +1763,27 @@ async function doFetchMatches(usePuppeteer = false) {
         actual_home_score: (actualHomeScore !== null && !isNaN(actualHomeScore)) ? actualHomeScore : null,
         actual_away_score: (actualAwayScore !== null && !isNaN(actualAwayScore)) ? actualAwayScore : null,
         actual_result: actualResult || null,
-        odds_home: oddsHome || null,
-        odds_draw: oddsDraw || null,
-        odds_away: oddsAway || null,
+        odds_home: null,
+        odds_draw: null,
+        odds_away: null,
       };
       
-      // 결과 로그
       if (matchData.actual_home_score !== null) {
         console.log(`    Match ${matchNum}: ${homeKr} ${matchData.actual_home_score}:${matchData.actual_away_score} ${awayKr} → ${matchData.actual_result}`);
       }
       
-      // 같은 홈팀 vs 원정팀 조합이 이미 있으면 제외 (핸디/언오버 변형)
-      const teamKey = `${homeKr}_${awayKr}`;
-      if (seenTeams.has(teamKey)) return;
-      seenTeams.add(teamKey);
-      
       matches.push(matchData);
     });
 
-    console.log(`  Parsed ${matches.length} soccer matches`);
+    console.log(`  Parsed ${matches.length} soccer matches from zentoto`);
     
     if (!matches.length) {
-      console.log('  No matches found, check HTML structure');
+      console.log('  No matches found, check zentoto HTML structure');
+      // 디버그: HTML 일부 출력
+      const tables = $('table').length;
+      const trs = $('tr').length;
+      console.log(`  Debug: ${tables} tables, ${trs} rows found`);
+      console.log(`  HTML snippet: ${html.substring(0, 500)}`);
       return;
     }
 
@@ -1848,7 +1797,7 @@ async function doFetchMatches(usePuppeteer = false) {
       });
     }
 
-    // 6. Supabase에 upsert
+    // Supabase에 upsert
     const result = await supabaseUpsert('proto_matches', matches, 'round_year,round_number,match_number');
     console.log(`  DB upsert: ${result.status} (${result.ok ? 'OK' : 'FAIL'})`);
     if (!result.ok) console.log(`  DB error: ${result.body}`);
@@ -1857,7 +1806,6 @@ async function doFetchMatches(usePuppeteer = false) {
 
   } catch (e) {
     console.error('Fetch matches error:', e.message);
-  }
   } finally {
     isFetchingMatches = false;
   }
@@ -1977,10 +1925,10 @@ app.listen(PORT, () => {
       await doScrapeAndSave();
       if (global.gc) { global.gc(); console.log('  GC triggered'); }
       
-      // 2단계: 와이즈토토 결과 수집 (Puppeteer - 예측 완료 후 순차 실행)
-      console.log(`${label}: fetching match results...`);
+      // 2단계: 젠토토에서 결과 수집 (가벼운 fetch - Puppeteer 불필요!)
+      console.log(`${label}: fetching match results from zentoto...`);
       try {
-        await doFetchMatches(true);
+        await doFetchMatches();
       } catch(e) {
         console.log(`  Result fetch failed: ${e.message}`);
       }
