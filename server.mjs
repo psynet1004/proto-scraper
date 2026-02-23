@@ -1597,6 +1597,70 @@ const LEAGUE_MAP = {
   'DFB포칼': 'DFBPokal',
 };
 
+// ====== DEBUG: 실제 HTML 구조 확인 ======
+app.get('/debug-html', auth, async (req, res) => {
+  try {
+    const source = req.query.source || 'zentoto';
+    let url, html;
+    
+    if (source === 'wisetoto') {
+      url = 'https://www.wisetoto.com/index.htm?tab_type=proto&game_type=pt&game_category=pt1';
+    } else {
+      url = 'https://www.zentoto.com/proto';
+    }
+    
+    const resp = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'ko-KR,ko;q=0.9',
+      },
+      signal: AbortSignal.timeout(30000),
+    });
+    html = await resp.text();
+    
+    const $ = cheerio.load(html);
+    const tables = $('table').length;
+    const trs = $('tr').length;
+    const tds = $('td').length;
+    const uls = $('ul').length;
+    const lis = $('li').length;
+    
+    // 첫 번째 테이블의 처음 5행
+    const sampleRows = [];
+    $('table').first().find('tr').slice(0, 5).each((i, tr) => {
+      const cells = [];
+      $(tr).find('td, th').each((j, cell) => {
+        cells.push($(cell).text().trim().substring(0, 50));
+      });
+      sampleRows.push(cells);
+    });
+    
+    // li.a1 찾기 (WiseToto 구조)
+    const a1Count = $('li.a1').length;
+    const a6Count = $('li.a6').length;
+    
+    // 회차 관련 텍스트 찾기
+    const roundTexts = [];
+    html.replace(/(\d+)회차/g, (m, n) => { roundTexts.push(`${n}회차`); });
+    
+    res.json({
+      source,
+      url,
+      htmlLength: html.length,
+      structure: { tables, trs, tds, uls, lis, a1Count, a6Count },
+      roundTexts: [...new Set(roundTexts)].slice(0, 10),
+      sampleRows,
+      htmlStart: html.substring(0, 300),
+      htmlEnd: html.substring(html.length - 300),
+      // class=a1이 있는지
+      hasA1Class: html.includes('class="a1"') || html.includes("class='a1'"),
+    });
+  } catch (e) {
+    res.json({ error: e.message });
+  }
+});
+
 // ====== FETCH MATCHES FROM ZENTOTO (lightweight, no Puppeteer!) ======
 app.get('/fetch-matches', auth, async (req, res) => {
   if (isRunning) return res.json({ error: 'Scraping in progress, try again later' });
@@ -1612,14 +1676,17 @@ async function doFetchMatches() {
   if (isRunning) { console.log('  Scraping in progress, skip fetch-matches'); return; }
   isFetchingMatches = true;
   try {
-    console.log('=== Fetching matches from Zentoto (no Puppeteer) ===');
+    console.log('=== Fetching match results (no Puppeteer) ===');
     
-    // 1단계: 젠토토 프로토 페이지 fetch (가벼운 HTML)
-    const zentotoUrl = 'https://www.zentoto.com/proto';
     let html = '';
+    let source = '';
+    let roundYear = new Date().getFullYear().toString();
+    let roundNumber = null;
+    
+    // 1단계: WiseToto 가벼운 fetch 시도
     try {
-      console.log('  Fetching zentoto.com/proto...');
-      const resp = await fetch(zentotoUrl, {
+      console.log('  Trying WiseToto lightweight fetch...');
+      const resp = await fetch('https://www.wisetoto.com/index.htm?tab_type=proto&game_type=pt&game_category=pt1', {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
           'Accept': 'text/html,application/xhtml+xml',
@@ -1628,166 +1695,178 @@ async function doFetchMatches() {
         signal: AbortSignal.timeout(30000),
       });
       html = await resp.text();
-      console.log(`  Zentoto OK: ${html.length} chars`);
-    } catch (e) {
-      console.error(`  Zentoto fetch failed: ${e.message}`);
-      return;
-    }
-    
-    if (html.length < 1000) {
-      console.log('  Zentoto returned too little data, aborting');
-      return;
-    }
-    
-    // 2단계: HTML 파싱
-    const $ = cheerio.load(html);
-    
-    // 회차 정보 추출 - 젠토토 HTML에서 찾기
-    let roundYear = new Date().getFullYear().toString();
-    let roundNumber = null;
-    
-    // "23회차" 등의 텍스트에서 추출
-    const roundMatch = html.match(/(\d{4})년도.*?(\d+)회차/s) || html.match(/(\d+)회차/);
-    if (roundMatch) {
-      if (roundMatch[2]) {
-        roundYear = roundMatch[1];
-        roundNumber = parseInt(roundMatch[2]);
+      console.log(`  WiseToto: ${html.length} chars`);
+      
+      // 회차 추출
+      const rm = html.match(/(\d{4})년도.*?(\d+)회차/s) || html.match(/game_year=(\d{4})&game_round=(\d+)/);
+      if (rm) { roundYear = rm[1]; roundNumber = parseInt(rm[2]); }
+      
+      // 경기 데이터 존재 확인
+      if (html.includes('class="a1"') || html.includes("class='a1'")) {
+        source = 'wisetoto';
+        console.log(`  WiseToto has match data! Round: ${roundYear}-${roundNumber}`);
       } else {
-        roundNumber = parseInt(roundMatch[1]);
+        console.log(`  WiseToto: no match data in HTML (JS rendering required). Round detected: ${roundYear}-${roundNumber || '?'}`);
+        html = '';
       }
+    } catch (e) {
+      console.log(`  WiseToto fetch failed: ${e.message}`);
     }
     
-    // fallback: WiseToto에서 회차만 가져오기 (가벼운 fetch)
-    if (!roundNumber) {
+    // 2단계: WiseToto에 데이터 없으면 젠토토 시도
+    if (!source) {
       try {
-        const wtResp = await fetch('https://www.wisetoto.com/index.htm?tab_type=proto&game_type=pt&game_category=pt1', {
-          headers: { 'User-Agent': 'Mozilla/5.0', 'Accept-Language': 'ko-KR,ko;q=0.9' },
-          signal: AbortSignal.timeout(15000),
+        console.log('  Trying Zentoto...');
+        const resp = await fetch('https://www.zentoto.com/proto', {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'text/html,application/xhtml+xml',
+            'Accept-Language': 'ko-KR,ko;q=0.9',
+          },
+          signal: AbortSignal.timeout(30000),
         });
-        const wtHtml = await wtResp.text();
-        const rm = wtHtml.match(/(\d{4})년도.*?(\d+)회차/s) || wtHtml.match(/game_year=(\d{4})&game_round=(\d+)/);
-        if (rm) { roundYear = rm[1]; roundNumber = parseInt(rm[2]); }
-        console.log(`  WiseToto round fallback: ${roundYear}-${roundNumber || '?'}`);
+        const zHtml = await resp.text();
+        console.log(`  Zentoto: ${zHtml.length} chars`);
+        
+        const z$ = cheerio.load(zHtml);
+        const zentotoTrs = z$('table tr td').length;
+        console.log(`  Zentoto structure: ${z$('table').length} tables, ${z$('tr').length} rows, ${zentotoTrs} tds`);
+        
+        if (zentotoTrs > 50) {
+          html = zHtml;
+          source = 'zentoto';
+          console.log('  Zentoto has data, using it');
+        } else {
+          console.log('  Zentoto also empty (JS rendering required)');
+        }
       } catch (e) {
-        console.log(`  WiseToto round fallback failed: ${e.message}`);
+        console.log(`  Zentoto fetch failed: ${e.message}`);
       }
     }
     
-    console.log(`  Round: ${roundYear}-${roundNumber || '?'}`);
+    if (!source || !html) {
+      console.log('  No data source available without Puppeteer');
+      console.log('  Match results will be updated when Puppeteer is available');
+      return;
+    }
     
-    // 3단계: 테이블에서 경기 데이터 파싱
-    // 젠토토 구조: <table> 내 <tr> 행들, No | League | Time | HOME vs AWAY | Type | 승 | 무 | 패 | ...
+    // 3단계: 파싱
+    const $ = cheerio.load(html);
     const matches = [];
     const seenTeams = new Set();
     let debugCount = 0;
     
-    $('table tr, tbody tr').each((_, tr) => {
-      const $tr = $(tr);
-      const cells = $tr.find('td');
-      if (cells.length < 4) return;
+    if (source === 'wisetoto') {
+      // WiseToto ul/li 파싱 (기존 로직)
+      console.log('  Parsing WiseToto HTML...');
       
-      // No 컬럼 (첫 번째 td) - "1 3" 형식 (메인번호 + 서브번호) 또는 단순 숫자
-      const noText = $(cells[0]).text().trim();
-      const noMatch = noText.match(/^(\d+)/);
-      if (!noMatch) return;
-      const matchNum = parseInt(noMatch[1]);
-      if (isNaN(matchNum) || matchNum < 1) return;
+      // 회차 재확인
+      if (!roundNumber) {
+        const roundMatch = html.match(/(\d{4})년도.*?(\d+)회차/s) || html.match(/game_year=(\d{4})&game_round=(\d+)/);
+        if (roundMatch) { roundYear = roundMatch[1]; roundNumber = parseInt(roundMatch[2]); }
+      }
+      if (!roundNumber) {
+        $('select option[selected], .round_select option[selected]').each((_, el) => {
+          const m = $(el).text().trim().match(/(\d+)회차/);
+          if (m) roundNumber = parseInt(m[1]);
+        });
+      }
+      if (!roundNumber) {
+        const sm = html.match(/승부식\s*(\d+)회차\s*발매/);
+        if (sm) roundNumber = parseInt(sm[1]);
+      }
       
-      // League 컬럼 (두 번째 td)
-      const league = $(cells[1]).text().trim();
+      console.log(`  Round: ${roundYear}-${roundNumber || '?'}`);
       
-      // Type 컬럼 - 승무패(일반)만 필터: H-, U/O, 승5패, NONE 등은 제외
-      const typeText = $(cells[4]) ? $(cells[4]).text().trim() : '';
-      if (typeText && (typeText.includes('H-') || typeText.includes('H+') || typeText.includes('U/O') || typeText.includes('승5패') || typeText === 'NONE')) return;
-      
-      // HOME vs AWAY 컬럼 (네 번째 td)
-      // 형식: "애들유나  4  :  0  퍼스글로" 또는 "애들유나  vs  퍼스글로"
-      const matchCell = $(cells[3]).text().trim();
-      
-      // 스코어가 있는 경우: "홈팀  숫자  :  숫자  원정팀"
-      let homeKr = '', awayKr = '';
-      let actualHomeScore = null, actualAwayScore = null, actualResult = null;
-      
-      const scoreMatch = matchCell.match(/^(.+?)\s+(\d+)\s*:\s*(\d+)\s+(.+)$/);
-      if (scoreMatch) {
-        homeKr = scoreMatch[1].trim();
-        actualHomeScore = parseInt(scoreMatch[2]);
-        actualAwayScore = parseInt(scoreMatch[3]);
-        awayKr = scoreMatch[4].trim();
-        if (!isNaN(actualHomeScore) && !isNaN(actualAwayScore)) {
-          actualResult = actualHomeScore > actualAwayScore ? '승' : actualHomeScore < actualAwayScore ? '패' : '무';
+      $('ul').each((_, ul) => {
+        const $ul = $(ul);
+        const noEl = $ul.find('li.a1');
+        if (!noEl.length) return;
+        const matchNum = parseInt(noEl.text().trim());
+        if (isNaN(matchNum)) return;
+        
+        if (debugCount < 3) {
+          const liInfo = [];
+          $ul.find('li').each((_, li) => {
+            const cls = $(li).attr('class') || 'no-class';
+            const txt = $(li).text().trim().substring(0, 30);
+            liInfo.push(`${cls}="${txt}"`);
+          });
+          console.log(`    [debug] Match ${matchNum}: ${liInfo.join(' | ')}`);
+          debugCount++;
         }
-      } else {
-        // 스코어 없는 경우: "홈팀  vs  원정팀" 또는 "홈팀  -  :  -  원정팀"
-        const vsMatch = matchCell.match(/^(.+?)\s+(?:vs|-\s*:\s*-)\s+(.+)$/);
-        if (vsMatch) {
-          homeKr = vsMatch[1].trim();
-          awayKr = vsMatch[2].trim();
+        
+        const hasHp = $ul.find('li.hp, li[class*="hp"]').length > 0;
+        const hasUn = $ul.find('li.un, li[class*="un"]').length > 0;
+        const hasD5 = $ul.find('li.d5').length > 0;
+        if (hasHp || hasUn || hasD5) return;
+        
+        const hasHm = $ul.find('li.hm').length > 0;
+        if (!hasHm) return;
+        
+        const league = $ul.find('li.a4').text().trim().replace(/[⚽🏀🏐⚾]/g, '').trim();
+        const a6 = $ul.find('li.a6');
+        const homeKr = a6.find('span.tn').text().trim() || a6.find('span.tnb').text().trim();
+        const a8 = $ul.find('li.a8');
+        const awayKr = a8.find('span.tnb').text().trim() || a8.find('span.tn').text().trim();
+        if (!homeKr || !awayKr) return;
+        
+        let actualHomeScore = null, actualAwayScore = null, actualResult = null;
+        const homeScoreEl = a6.find('span.win, span.lose, span.draw');
+        const awayScoreEl = a8.find('span.win, span.lose, span.draw');
+        if (homeScoreEl.length && awayScoreEl.length) {
+          actualHomeScore = parseInt(homeScoreEl.text().trim());
+          actualAwayScore = parseInt(awayScoreEl.text().trim());
+          if (!isNaN(actualHomeScore) && !isNaN(actualAwayScore)) {
+            actualResult = actualHomeScore > actualAwayScore ? '승' : actualHomeScore < actualAwayScore ? '패' : '무';
+          }
         }
-      }
-      
-      if (!homeKr || !awayKr) return;
-      
-      // 축구 리그만 필터 (NBA, WKBL, KOVO 등 제외)
-      const soccerLeagues = ['A리그', '에레디비', '분데스리', '분데스2', '세리에A', '세리에B', '프리그1', '리그1', '리그2',
-        'EFL챔', 'EFL챔피', '라리가', '라리가2', '프리미어', 'EPL', 'J1백년', 'J2백년', 'J1리그', 'J2리그',
-        'UEFA유로', 'UEFA챔', 'FA컵', '코파델레', '국왕컵', 'DFB포칼'];
-      const isSoccer = soccerLeagues.some(l => league.includes(l)) || 
-        !['NBA', 'WKBL', 'KBL', 'KOVO남', 'KOVO여', 'KBO', 'MLB', 'NPB', 'NHL', 'NFL'].some(l => league.includes(l));
-      if (!isSoccer) return;
-      
-      // 같은 홈팀 vs 원정팀 조합이 이미 있으면 제외
-      const teamKey = `${homeKr}_${awayKr}`;
-      if (seenTeams.has(teamKey)) return;
-      seenTeams.add(teamKey);
-      
-      const homeEn = TEAM_MAP[homeKr] || '';
-      const awayEn = TEAM_MAP[awayKr] || '';
-      const leagueDb = LEAGUE_MAP[league] || league;
-      
-      if (debugCount < 5) {
-        console.log(`    [debug] No ${matchNum}: ${league} | ${homeKr} vs ${awayKr} | score: ${actualHomeScore}:${actualAwayScore} | type: "${typeText}"`);
-        debugCount++;
-      }
-      
-      const matchData = {
-        round_year: roundYear,
-        round_number: roundNumber,
-        match_number: matchNum,
-        home_team_kr: homeKr,
-        away_team_kr: awayKr,
-        home_team_en: homeEn,
-        away_team_en: awayEn,
-        league: leagueDb,
-        match_type: 'normal',
-        actual_home_score: (actualHomeScore !== null && !isNaN(actualHomeScore)) ? actualHomeScore : null,
-        actual_away_score: (actualAwayScore !== null && !isNaN(actualAwayScore)) ? actualAwayScore : null,
-        actual_result: actualResult || null,
-        odds_home: null,
-        odds_draw: null,
-        odds_away: null,
-      };
-      
-      if (matchData.actual_home_score !== null) {
-        console.log(`    Match ${matchNum}: ${homeKr} ${matchData.actual_home_score}:${matchData.actual_away_score} ${awayKr} → ${matchData.actual_result}`);
-      }
-      
-      matches.push(matchData);
-    });
+        
+        const oddsEls = $ul.find('li.a9');
+        let oddsHome = null, oddsDraw = null, oddsAway = null;
+        if (oddsEls.length >= 3) {
+          const o1 = parseFloat($(oddsEls[0]).find('span.pt').text().trim());
+          const o2 = parseFloat($(oddsEls[1]).find('span.pt').text().trim());
+          const o3 = parseFloat($(oddsEls[2]).find('span.pt').text().trim());
+          if (o1 > 0) oddsHome = o1;
+          if (o2 > 0) oddsDraw = o2;
+          if (o3 > 0) oddsAway = o3;
+        }
+        
+        const teamKey = `${homeKr}_${awayKr}`;
+        if (seenTeams.has(teamKey)) return;
+        seenTeams.add(teamKey);
+        
+        const matchData = {
+          round_year: roundYear, round_number: roundNumber, match_number: matchNum,
+          home_team_kr: homeKr, away_team_kr: awayKr,
+          home_team_en: TEAM_MAP[homeKr] || '', away_team_en: TEAM_MAP[awayKr] || '',
+          league: LEAGUE_MAP[league] || league, match_type: 'normal',
+          actual_home_score: actualHomeScore !== null && !isNaN(actualHomeScore) ? actualHomeScore : null,
+          actual_away_score: actualAwayScore !== null && !isNaN(actualAwayScore) ? actualAwayScore : null,
+          actual_result: actualResult || null,
+          odds_home: oddsHome, odds_draw: oddsDraw, odds_away: oddsAway,
+        };
+        
+        if (matchData.actual_home_score !== null) {
+          console.log(`    Match ${matchNum}: ${homeKr} ${matchData.actual_home_score}:${matchData.actual_away_score} ${awayKr} → ${matchData.actual_result}`);
+        }
+        
+        matches.push(matchData);
+      });
+    } else if (source === 'zentoto') {
+      // Zentoto table 파싱
+      console.log('  Parsing Zentoto HTML...');
+      // TODO: zentoto 파싱 로직 (JS 렌더링 문제로 현재 미사용)
+    }
 
-    console.log(`  Parsed ${matches.length} soccer matches from zentoto`);
+    console.log(`  Parsed ${matches.length} matches from ${source}`);
     
     if (!matches.length) {
-      console.log('  No matches found, check zentoto HTML structure');
-      // 디버그: HTML 일부 출력
-      const tables = $('table').length;
-      const trs = $('tr').length;
-      console.log(`  Debug: ${tables} tables, ${trs} rows found`);
-      console.log(`  HTML snippet: ${html.substring(0, 500)}`);
+      console.log('  No matches found');
       return;
     }
 
-    // 영문명 없는 팀 로그
     const unmapped = matches.filter(m => !m.home_team_en || !m.away_team_en);
     if (unmapped.length) {
       console.log(`  ⚠ ${unmapped.length} matches with unmapped teams:`);
@@ -1797,7 +1876,6 @@ async function doFetchMatches() {
       });
     }
 
-    // Supabase에 upsert
     const result = await supabaseUpsert('proto_matches', matches, 'round_year,round_number,match_number');
     console.log(`  DB upsert: ${result.status} (${result.ok ? 'OK' : 'FAIL'})`);
     if (!result.ok) console.log(`  DB error: ${result.body}`);
