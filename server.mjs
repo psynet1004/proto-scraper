@@ -1517,6 +1517,9 @@ const TEAM_MAP = {
   '레노파야': 'Renofa Yamaguchi', '반포레': 'Ventforet Kofu', '자스파쿠': 'Zweigen Kanazawa',
   '가이나레': 'Gainare Tottori', '후지에다': 'Fujieda MYFC', '카타프로': 'Kataller Toyama',
   '오미야아': 'Omiya Ardija', '츠에겐가': 'Zweigen Kanazawa',
+  '쇼난': 'Shonan Bellmare', '하치노헤': 'Vanraure Hachinohe', '미야자키': 'Tegevajaro Miyazaki',
+  '고후': 'Ventforet Kofu', '오클FC': 'Auckland FC',
+  '전북현대': 'Jeonbuk Hyundai', '대전하나': 'Daejeon Hana Citizen',
   // Premier League
   '리버풀': 'Liverpool', '브라이턴': 'Brighton', 'A빌라': 'Aston Villa', '뉴캐슬U': 'Newcastle United',
   '맨시티': 'Manchester City', '아스널': 'Arsenal', '첼시': 'Chelsea', '맨유': 'Manchester United',
@@ -1586,6 +1589,7 @@ const TEAM_MAP = {
 // 리그명 매핑 (와이즈토토 → DB)
 const LEAGUE_MAP = {
   'A리그': 'A-League', 'J1백년': 'J리그', 'J2백년': 'J2리그', 'J1리그': 'J리그', 'J2리그': 'J2리그',
+  'J2J3백년': 'J2리그',
   '프리미어': 'PremierLeague', 'EPL': 'PremierLeague',
   'EFL챔': 'Championship', 'EFL챔피': 'Championship',
   '라리가': 'LaLiga', '라리가2': 'LaLiga2', '세리에A': 'SerieA', '세리에B': 'SerieB',
@@ -1595,6 +1599,7 @@ const LEAGUE_MAP = {
   'UEFA유로': 'UEFAEuropa', 'UEFA챔': 'UEFAChampions',
   'FA컵': 'FACup', '코파델레': 'CopaDelRey', '국왕컵': 'CopaDelRey',
   'DFB포칼': 'DFBPokal',
+  'K슈퍼컵': 'KLeague', 'K리그1': 'KLeague', 'K리그2': 'KLeague2',
 };
 
 // ====== DEBUG: 실제 HTML 구조 확인 ======
@@ -1873,8 +1878,106 @@ async function doFetchMatches() {
       });
       
     } else if (source === 'zentoto') {
-      console.log('  Parsing Zentoto HTML...');
-      // zentoto는 JS 렌더링이 필요해서 현재 비활성
+      console.log('  Parsing Zentoto HTML (table structure)...');
+      
+      // 회차 정보가 없으면 WiseToto에서 가져오기
+      if (!roundNumber) {
+        try {
+          const wtResp = await fetch('https://www.wisetoto.com/index.htm?tab_type=proto&game_type=pt&game_category=pt1', {
+            headers: HEADERS, signal: AbortSignal.timeout(15000),
+          });
+          const wtHtml = await wtResp.text();
+          const rm = wtHtml.match(/(\d{4})년도.*?(\d+)회차/s) || wtHtml.match(/game_year=(\d{4})&game_round=(\d+)/);
+          if (rm) { roundYear = rm[1]; roundNumber = parseInt(rm[2]); }
+          console.log(`  WiseToto round fallback: ${roundYear}-${roundNumber || '?'}`);
+        } catch (e) {
+          console.log(`  WiseToto round fallback failed: ${e.message}`);
+        }
+      }
+      
+      // 젠토토 구조: 테이블 안의 <tr> 행들
+      // 각 행의 td: No | League | Time | HOME vs AWAY | Type | 승/무/패 | 메모 | 장소 | Status
+      // Type이 비어있으면 일반 승무패, H-1.0/H+1.0은 핸디캡, U/O는 언오버, NONE은 제외
+      // HOME vs AWAY 셀 안에 스코어가 포함됨: "애들유나  4  :  0  퍼스글로"
+      
+      $('tr').each((_, tr) => {
+        const $tr = $(tr);
+        const cells = $tr.find('> td');
+        if (cells.length < 6) return;
+        
+        // No (첫 번째 td) - "1 3" 또는 "1" 형식
+        const noText = $(cells[0]).text().trim();
+        const noMatch = noText.match(/^(\d+)/);
+        if (!noMatch) return;
+        const matchNum = parseInt(noMatch[1]);
+        if (isNaN(matchNum) || matchNum < 1) return;
+        
+        // Type 필터 (5번째 td, index 4)
+        const typeText = $(cells[4]).text().trim();
+        if (typeText && (typeText.includes('H-') || typeText.includes('H+') || typeText.includes('U/O') || typeText.includes('승5패') || typeText === 'NONE')) return;
+        
+        // League (2번째 td, index 1)
+        const league = $(cells[1]).text().trim();
+        
+        // 축구 리그만 (NBA, WKBL 등 제외)
+        const nonSoccerLeagues = ['NBA', 'KBL', 'WKBL', 'KOVO남', 'KOVO여', 'KBO', 'MLB', 'NPB', 'NHL', 'NFL'];
+        if (nonSoccerLeagues.some(l => league.includes(l))) return;
+        
+        // HOME vs AWAY 파싱 (4번째 td, index 3)
+        const matchCell = $(cells[3]).text().trim().replace(/\s+/g, ' ');
+        
+        let homeKr = '', awayKr = '';
+        let actualHomeScore = null, actualAwayScore = null, actualResult = null;
+        
+        // 스코어가 있는 경우: "홈팀 숫자 : 숫자 원정팀"
+        const scoreMatch = matchCell.match(/^(.+?)\s+(\d+)\s*:\s*(\d+)\s+(.+)$/);
+        if (scoreMatch) {
+          homeKr = scoreMatch[1].trim();
+          actualHomeScore = parseInt(scoreMatch[2]);
+          actualAwayScore = parseInt(scoreMatch[3]);
+          awayKr = scoreMatch[4].trim();
+          if (!isNaN(actualHomeScore) && !isNaN(actualAwayScore)) {
+            actualResult = actualHomeScore > actualAwayScore ? '승' : actualHomeScore < actualAwayScore ? '패' : '무';
+          }
+        } else {
+          // 스코어 없는 경우: "홈팀 vs 원정팀" 또는 "홈팀 원정팀"
+          const vsMatch = matchCell.match(/^(.+?)\s+(?:vs|-\s*:\s*-)\s+(.+)$/);
+          if (vsMatch) {
+            homeKr = vsMatch[1].trim();
+            awayKr = vsMatch[2].trim();
+          }
+        }
+        
+        if (!homeKr || !awayKr) return;
+        
+        // 중복 체크
+        const teamKey = `${homeKr}_${awayKr}`;
+        if (seenTeams.has(teamKey)) return;
+        seenTeams.add(teamKey);
+        
+        const homeEn = TEAM_MAP[homeKr] || '';
+        const awayEn = TEAM_MAP[awayKr] || '';
+        const leagueDb = LEAGUE_MAP[league] || league;
+        
+        if (debugCount < 5) {
+          console.log(`    [debug] #${matchNum}: ${league} | ${homeKr} ${actualHomeScore ?? '?'}:${actualAwayScore ?? '?'} ${awayKr} | type: "${typeText}"`);
+          debugCount++;
+        }
+        
+        if (actualHomeScore !== null) {
+          console.log(`    Match ${matchNum}: ${homeKr} ${actualHomeScore}:${actualAwayScore} ${awayKr} → ${actualResult}`);
+        }
+        
+        matches.push({
+          round_year: roundYear, round_number: roundNumber, match_number: matchNum,
+          home_team_kr: homeKr, away_team_kr: awayKr,
+          home_team_en: homeEn, away_team_en: awayEn,
+          league: leagueDb, match_type: 'normal',
+          actual_home_score: actualHomeScore, actual_away_score: actualAwayScore,
+          actual_result: actualResult,
+          odds_home: null, odds_draw: null, odds_away: null,
+        });
+      });
     }
 
     console.log(`  Parsed ${matches.length} matches from ${source}`);
@@ -2033,7 +2136,7 @@ app.listen(PORT, () => {
       if (global.gc) { global.gc(); console.log('  GC triggered'); }
       
       // 2단계: 젠토토에서 결과 수집 (가벼운 fetch - Puppeteer 불필요!)
-      console.log(`${label}: fetching match results from zentoto...`);
+      console.log(`${label}: fetching match results...`);
       try {
         await doFetchMatches();
       } catch(e) {
