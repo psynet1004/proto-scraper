@@ -1945,6 +1945,10 @@ async function doFetchMatches(overrideRound = null, urlVariant = null) {
         // HOME vs AWAY 파싱 (4번째 td, index 3)
         const matchCell = $(cells[3]).text().trim().replace(/\s+/g, ' ');
         
+        // Status 컬럼 (마지막 td) - "경기종료" / "경기전" / "경기중" 등
+        const statusText = $(cells[cells.length - 1]).text().trim();
+        const isFinished = statusText.includes('경기종료') || statusText.includes('종료');
+        
         let homeKr = '', awayKr = '';
         let actualHomeScore = null, actualAwayScore = null, actualResult = null;
         
@@ -1952,11 +1956,14 @@ async function doFetchMatches(overrideRound = null, urlVariant = null) {
         const scoreMatch = matchCell.match(/^(.+?)\s+(\d+)\s*:\s*(\d+)\s+(.+)$/);
         if (scoreMatch) {
           homeKr = scoreMatch[1].trim();
-          actualHomeScore = parseInt(scoreMatch[2]);
-          actualAwayScore = parseInt(scoreMatch[3]);
           awayKr = scoreMatch[4].trim();
-          if (!isNaN(actualHomeScore) && !isNaN(actualAwayScore)) {
-            actualResult = actualHomeScore > actualAwayScore ? '승' : actualHomeScore < actualAwayScore ? '패' : '무';
+          // 경기종료일 때만 스코어 저장 (경기중 스코어는 무시)
+          if (isFinished) {
+            actualHomeScore = parseInt(scoreMatch[2]);
+            actualAwayScore = parseInt(scoreMatch[3]);
+            if (!isNaN(actualHomeScore) && !isNaN(actualAwayScore)) {
+              actualResult = actualHomeScore > actualAwayScore ? '승' : actualHomeScore < actualAwayScore ? '패' : '무';
+            }
           }
         } else {
           // 스코어 없는 경우: "홈팀 vs 원정팀" 또는 "홈팀 원정팀"
@@ -1979,12 +1986,12 @@ async function doFetchMatches(overrideRound = null, urlVariant = null) {
         const leagueDb = LEAGUE_MAP[league] || league;
         
         if (debugCount < 5) {
-          console.log(`    [debug] #${matchNum}: ${league} | ${homeKr} ${actualHomeScore ?? '?'}:${actualAwayScore ?? '?'} ${awayKr} | type: "${typeText}"`);
+          console.log(`    [debug] #${matchNum}: ${league} | ${homeKr} ${actualHomeScore ?? '?'}:${actualAwayScore ?? '?'} ${awayKr} | status: "${statusText}" | type: "${typeText}"`);
           debugCount++;
         }
         
         if (actualHomeScore !== null) {
-          console.log(`    Match ${matchNum}: ${homeKr} ${actualHomeScore}:${actualAwayScore} ${awayKr} → ${actualResult}`);
+          console.log(`    Match ${matchNum}: ${homeKr} ${actualHomeScore}:${actualAwayScore} ${awayKr} → ${actualResult} (${statusText})`);
         }
         
         matches.push({
