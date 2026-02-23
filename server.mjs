@@ -1584,6 +1584,9 @@ const TEAM_MAP = {
   '빌렘II': 'Willem II', '알메르시': 'Almere City',
   // 기타
   '엘체': 'Elche', '오사수니': 'Osasuna',
+  '맨체스U': 'Manchester United', '클뤼브뤼': 'Club Brugge', '브리스C': 'Bristol City',
+  '찰턴': 'Charlton Athletic', '올림피아': 'Olympiacos', '보되글림': 'Bodo/Glimt',
+  '카라바흐': 'Qarabag', 'LAFC': 'LAFC', '레알에스': 'Real Estelí',
 };
 
 // 리그명 매핑 (와이즈토토 → DB)
@@ -1596,7 +1599,8 @@ const LEAGUE_MAP = {
   '분데스리': 'Bundesliga', '분데스2': 'Bundesliga2',
   '프리그1': 'Ligue1', '리그1': 'Ligue1', '리그2': 'Ligue2', '프리그2': 'Ligue2',
   '에레디비': 'Eredivisie', '에레디2': 'Eredivisie2',
-  'UEFA유로': 'UEFAEuropa', 'UEFA챔': 'UEFAChampions',
+  'UEFA유로': 'UEFAEuropa', 'UEFA챔': 'UEFAChampions', 'UCL': 'UEFAChampions', 'UEL': 'UEFAEuropa',
+  'UECL': 'UEFAConference', 'MLS': 'MLS', 'CONCACAF': 'CONCACAF',
   'FA컵': 'FACup', '코파델레': 'CopaDelRey', '국왕컵': 'CopaDelRey',
   'DFB포칼': 'DFBPokal',
   'K슈퍼컵': 'KLeague', 'K리그1': 'KLeague', 'K리그2': 'KLeague2',
