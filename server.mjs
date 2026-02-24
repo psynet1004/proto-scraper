@@ -2034,6 +2034,60 @@ async function doFetchMatches(overrideRound = null, urlVariant = null) {
       });
     }
 
+    // ====== WiseToto에서 배당 추출 ======
+    // WiseToto HTML은 이미 wtHtml에 있음 (회차 확인용으로 fetch 했던 것)
+    // 패턴: rs('2026','24','6','sc','w','w','n','n') → 승 1.51
+    //        rs('2026','24','6','sc','d','w','n','n') → 무 3.30
+    //        rs('2026','24','6','sc','l','w','n','n') → 패 5.10
+    try {
+      // wtHtml이 있으면 배당 추출 시도
+      const wtOddsResp = await fetch('https://www.wisetoto.com/index.htm?tab_type=proto&game_type=pt&game_category=pt1', {
+        headers: HEADERS, signal: AbortSignal.timeout(15000),
+      });
+      const wtOddsHtml = await wtOddsResp.text();
+      
+      // 모든 배당 span 추출: onclick="rs('년도','회차','경기번호','sc','w/d/l',...)" class="pt">배당</span>
+      const oddsRegex = /rs\('(\d{4})','(\d+)','(\d+)','sc','([wdl])'/g;
+      const oddsMap = {}; // { matchNum: { w: 1.51, d: 3.30, l: 5.10 } }
+      
+      let oddsMatch;
+      while ((oddsMatch = oddsRegex.exec(wtOddsHtml)) !== null) {
+        const [, , , matchNum, type] = oddsMatch;
+        const num = parseInt(matchNum);
+        if (!oddsMap[num]) oddsMap[num] = {};
+        
+        // 배당값은 rs(...) 뒤에 나오는 숫자 추출
+        const afterIdx = oddsMatch.index + oddsMatch[0].length;
+        const snippet = wtOddsHtml.substring(afterIdx, afterIdx + 100);
+        const valMatch = snippet.match(/class="pt"[^>]*>(\d+\.?\d*)</);
+        if (valMatch) {
+          oddsMap[num][type] = parseFloat(valMatch[1]);
+        }
+      }
+      
+      const oddsCount = Object.keys(oddsMap).length;
+      if (oddsCount > 0) {
+        console.log(`  WiseToto odds: found ${oddsCount} matches with odds`);
+        
+        // 매치에 배당 적용
+        let applied = 0;
+        for (const m of matches) {
+          const odds = oddsMap[m.match_number];
+          if (odds) {
+            if (odds.w) m.odds_home = odds.w;
+            if (odds.d) m.odds_draw = odds.d;
+            if (odds.l) m.odds_away = odds.l;
+            applied++;
+          }
+        }
+        console.log(`  Odds applied to ${applied}/${matches.length} matches`);
+      } else {
+        console.log('  WiseToto odds: no odds found in HTML');
+      }
+    } catch (e) {
+      console.log(`  WiseToto odds fetch failed: ${e.message}`);
+    }
+
     const result = await supabaseUpsert('proto_matches', matches, 'round_year,round_number,match_number');
     console.log(`  DB upsert: ${result.status} (${result.ok ? 'OK' : 'FAIL'})`);
     if (!result.ok) console.log(`  DB error: ${result.body}`);
