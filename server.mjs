@@ -2257,8 +2257,8 @@ app.listen(PORT, () => {
     }
   }
   
-  // 2시간마다 기본 업데이트
-  setInterval(() => runFullCycle('Scheduled-2h'), 2 * 60 * 60 * 1000);
+  // 3시간마다 기본 업데이트
+  setInterval(() => runFullCycle('Scheduled-3h'), 3 * 60 * 60 * 1000);
   
   // 발매 시간 기반 스케줄 (KST 14:05에 트리거)
   // 월요일(1), 수요일(3), 금요일(5) 14:05 KST
