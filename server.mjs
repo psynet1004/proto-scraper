@@ -2034,79 +2034,6 @@ async function doFetchMatches(overrideRound = null, urlVariant = null) {
       });
     }
 
-    // ====== WiseToto에서 배당 추출 ======
-    // WiseToto HTML은 이미 wtHtml에 있음 (회차 확인용으로 fetch 했던 것)
-    // 패턴: rs('2026','24','6','sc','w','w','n','n') → 승 1.51
-    //        rs('2026','24','6','sc','d','w','n','n') → 무 3.30
-    //        rs('2026','24','6','sc','l','w','n','n') → 패 5.10
-    try {
-      // wtHtml이 있으면 배당 추출 시도
-      const wtOddsResp = await fetch('https://www.wisetoto.com/index.htm?tab_type=proto&game_type=pt&game_category=pt1', {
-        headers: HEADERS, signal: AbortSignal.timeout(15000),
-      });
-      const wtOddsHtml = await wtOddsResp.text();
-      
-      // 모든 배당 span 추출: onclick="rs('년도','회차','경기번호','sc','w/d/l',...)" class="pt">배당</span>
-      const oddsRegex = /rs\('(\d{4})','(\d+)','(\d+)','sc','([wdl])'/g;
-      const oddsMap = {}; // { matchNum: { w: 1.51, d: 3.30, l: 5.10 } }
-      
-      // 디버그: rs 패턴이 HTML에 있는지 확인
-      const hasRsPattern = wtOddsHtml.includes("rs(");
-      const hasPtClass = wtOddsHtml.includes('class="pt"');
-      console.log(`  WiseToto odds debug: hasRs=${hasRsPattern}, hasPt=${hasPtClass}, htmlLen=${wtOddsHtml.length}`);
-      
-      // rs( 패턴의 첫 번째 매치를 샘플로 출력
-      const sampleRs = wtOddsHtml.match(/rs\([^)]+\)/);
-      if (sampleRs) {
-        const sampleIdx = sampleRs.index;
-        console.log(`  WiseToto odds sample: ...${wtOddsHtml.substring(sampleIdx, sampleIdx + 200).replace(/\n/g, ' ')}...`);
-      } else {
-        // rs가 없으면 다른 배당 패턴 찾기
-        const oddsSample = wtOddsHtml.match(/1\.\d{2}|2\.\d{2}|3\.\d{2}/);
-        if (oddsSample) {
-          const si = Math.max(0, oddsSample.index - 100);
-          console.log(`  WiseToto odds alt sample: ...${wtOddsHtml.substring(si, si + 300).replace(/\n/g, ' ')}...`);
-        }
-      }
-      
-      let oddsMatch;
-      while ((oddsMatch = oddsRegex.exec(wtOddsHtml)) !== null) {
-        const [, , , matchNum, type] = oddsMatch;
-        const num = parseInt(matchNum);
-        if (!oddsMap[num]) oddsMap[num] = {};
-        
-        // 배당값은 rs(...) 뒤에 나오는 숫자 추출
-        const afterIdx = oddsMatch.index + oddsMatch[0].length;
-        const snippet = wtOddsHtml.substring(afterIdx, afterIdx + 100);
-        const valMatch = snippet.match(/class="pt"[^>]*>(\d+\.?\d*)</);
-        if (valMatch) {
-          oddsMap[num][type] = parseFloat(valMatch[1]);
-        }
-      }
-      
-      const oddsCount = Object.keys(oddsMap).length;
-      if (oddsCount > 0) {
-        console.log(`  WiseToto odds: found ${oddsCount} matches with odds`);
-        
-        // 매치에 배당 적용
-        let applied = 0;
-        for (const m of matches) {
-          const odds = oddsMap[m.match_number];
-          if (odds) {
-            if (odds.w) m.odds_home = odds.w;
-            if (odds.d) m.odds_draw = odds.d;
-            if (odds.l) m.odds_away = odds.l;
-            applied++;
-          }
-        }
-        console.log(`  Odds applied to ${applied}/${matches.length} matches`);
-      } else {
-        console.log('  WiseToto odds: no odds found in HTML');
-      }
-    } catch (e) {
-      console.log(`  WiseToto odds fetch failed: ${e.message}`);
-    }
-
     const result = await supabaseUpsert('proto_matches', matches, 'round_year,round_number,match_number');
     console.log(`  DB upsert: ${result.status} (${result.ok ? 'OK' : 'FAIL'})`);
     if (!result.ok) console.log(`  DB error: ${result.body}`);
@@ -2121,6 +2048,87 @@ async function doFetchMatches(overrideRound = null, urlVariant = null) {
 }
 
 // ====== START ======
+
+// ====== 배당 수동 입력 API ======
+// /update-odds?key=proto-scraper-2026&round=24&odds=6:1.51:3.30:5.10,11:1.85:3.20:3.60,16:3.70:3.30:1.70
+app.get('/update-odds', auth, async (req, res) => {
+  try {
+    const { round, odds } = req.query;
+    if (!round || !odds) {
+      return res.json({ error: 'round and odds required. Format: odds=경기번호:승:무:패,경기번호:승:무:패,...' });
+    }
+
+    const roundNumber = parseInt(round);
+    const roundYear = '2026';
+
+    // odds 파싱: "6:1.51:3.30:5.10,11:1.85:3.20:3.60"
+    const entries = odds.split(',').map(e => {
+      const parts = e.trim().split(':');
+      if (parts.length < 4) return null;
+      return {
+        match_number: parseInt(parts[0]),
+        odds_home: parseFloat(parts[1]),
+        odds_draw: parseFloat(parts[2]),
+        odds_away: parseFloat(parts[3]),
+      };
+    }).filter(e => e && !isNaN(e.match_number));
+
+    if (!entries.length) {
+      return res.json({ error: 'No valid odds entries parsed' });
+    }
+
+    console.log(`=== Updating odds for round ${roundYear}-${roundNumber}: ${entries.length} matches ===`);
+
+    // DB에서 해당 회차 매치 가져오기
+    const matchesResp = await fetch(
+      `${SUPABASE_URL}/rest/v1/proto_matches?round_year=eq.${roundYear}&round_number=eq.${roundNumber}&match_type=eq.normal&select=id,match_number`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    );
+    const matches = await matchesResp.json();
+
+    let updated = 0;
+    for (const entry of entries) {
+      const match = matches.find(m => m.match_number === entry.match_number);
+      if (!match) {
+        console.log(`  Match ${entry.match_number}: not found in DB, skipping`);
+        continue;
+      }
+
+      const updateResp = await fetch(
+        `${SUPABASE_URL}/rest/v1/proto_matches?id=eq.${match.id}`,
+        {
+          method: 'PATCH',
+          headers: {
+            'apikey': SUPABASE_KEY,
+            'Authorization': `Bearer ${SUPABASE_KEY}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal',
+          },
+          body: JSON.stringify({
+            odds_home: entry.odds_home,
+            odds_draw: entry.odds_draw,
+            odds_away: entry.odds_away,
+          }),
+        }
+      );
+
+      if (updateResp.ok) {
+        updated++;
+        console.log(`  Match ${entry.match_number}: ${entry.odds_home}/${entry.odds_draw}/${entry.odds_away} ✓`);
+      } else {
+        console.log(`  Match ${entry.match_number}: update failed (${updateResp.status})`);
+      }
+    }
+
+    console.log(`=== Done: ${updated}/${entries.length} odds updated ===`);
+    res.json({ ok: true, updated, total: entries.length });
+
+  } catch (e) {
+    console.error('Update odds error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ====== 수익률 계산 API ======
 app.get('/yield', async (req, res) => {
   try {
