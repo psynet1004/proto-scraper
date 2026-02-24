@@ -2050,6 +2050,25 @@ async function doFetchMatches(overrideRound = null, urlVariant = null) {
       const oddsRegex = /rs\('(\d{4})','(\d+)','(\d+)','sc','([wdl])'/g;
       const oddsMap = {}; // { matchNum: { w: 1.51, d: 3.30, l: 5.10 } }
       
+      // 디버그: rs 패턴이 HTML에 있는지 확인
+      const hasRsPattern = wtOddsHtml.includes("rs(");
+      const hasPtClass = wtOddsHtml.includes('class="pt"');
+      console.log(`  WiseToto odds debug: hasRs=${hasRsPattern}, hasPt=${hasPtClass}, htmlLen=${wtOddsHtml.length}`);
+      
+      // rs( 패턴의 첫 번째 매치를 샘플로 출력
+      const sampleRs = wtOddsHtml.match(/rs\([^)]+\)/);
+      if (sampleRs) {
+        const sampleIdx = sampleRs.index;
+        console.log(`  WiseToto odds sample: ...${wtOddsHtml.substring(sampleIdx, sampleIdx + 200).replace(/\n/g, ' ')}...`);
+      } else {
+        // rs가 없으면 다른 배당 패턴 찾기
+        const oddsSample = wtOddsHtml.match(/1\.\d{2}|2\.\d{2}|3\.\d{2}/);
+        if (oddsSample) {
+          const si = Math.max(0, oddsSample.index - 100);
+          console.log(`  WiseToto odds alt sample: ...${wtOddsHtml.substring(si, si + 300).replace(/\n/g, ' ')}...`);
+        }
+      }
+      
       let oddsMatch;
       while ((oddsMatch = oddsRegex.exec(wtOddsHtml)) !== null) {
         const [, , , matchNum, type] = oddsMatch;
