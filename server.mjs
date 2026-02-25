@@ -291,11 +291,23 @@ async function doScrapeAndSave() {
               if (resp.ok) pageHtml = await resp.text();
               else throw new Error(`HTTP ${resp.status}`);
             } else {
-              pageHtml = await getPage(url, src.wait, 60000, src.extraWait || 0, src.humanize || false);
+              // predictz 등 Puppeteer 소스: 개별 URL 타임아웃 30초
+              const urlTimeout = src.name === 'predictz' ? 40000 : 60000;
+              pageHtml = await getPage(url, src.wait, urlTimeout, src.extraWait || 0, src.humanize || false);
             }
             console.log(`  ${label}: ${pageHtml.length} chars`);
           } catch (e) {
             console.log(`  ${label}: FAILED - ${e.message}`);
+            // Puppeteer 소스 실패 시 브라우저 강제 재시작
+            if (src.name !== 'vitibet') {
+              console.log(`  ${label}: force-closing browser after failure`);
+              if (browser) { try { await browser.close(); } catch(e2) {} browser = null; }
+            }
+            // predictz: 첫 URL CF 차단 시 나머지 URL도 차단될 가능성 높으므로 전체 스킵
+            if (src.name === 'predictz' && i === 0) {
+              console.log(`  predictz: first URL failed, skipping remaining URLs`);
+              break;
+            }
             continue;
           }
           
@@ -1452,10 +1464,12 @@ function getAliases(teamEn) {
 // ====== 향상된 fuzzy 매칭 ======
 function fuzzy(text, team) {
   if (!text || !team) return false;
-  const t = text.toLowerCase();
+  // 유니코드 정규화: ë→e, ž→z, ą→a, ł→l 등 발음 기호 제거
+  const norm = (s) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const t = norm(text);
   
   // 1. 원본 팀명으로 매칭
-  const parts = team.toLowerCase().split(/\s+/);
+  const parts = norm(team).split(/\s+/);
   if (parts.every(p => t.includes(p))) return true;
   if (parts[0].length >= 4 && t.includes(parts[0])) return true;
   if (parts.length > 1 && parts[1].length >= 4 && t.includes(parts[1])) return true;
@@ -1464,7 +1478,7 @@ function fuzzy(text, team) {
   const aliases = getAliases(team);
   for (const alias of aliases) {
     if (alias === team) continue; // 원본은 이미 체크함
-    const aliasParts = alias.toLowerCase().split(/\s+/);
+    const aliasParts = norm(alias).split(/\s+/);
     if (aliasParts.every(p => t.includes(p))) return true;
     // 단일 단어 별칭 (예: 'Kobe', 'Bayern')은 4자 이상이면 매칭
     if (aliasParts.length === 1 && aliasParts[0].length >= 4 && t.includes(aliasParts[0])) return true;
