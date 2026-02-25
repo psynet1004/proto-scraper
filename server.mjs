@@ -1587,6 +1587,20 @@ const TEAM_MAP = {
   '맨체스U': 'Manchester United', '클뤼브뤼': 'Club Brugge', '브리스C': 'Bristol City',
   '찰턴': 'Charlton Athletic', '올림피아': 'Olympiacos', '보되글림': 'Bodo/Glimt',
   '카라바흐': 'Qarabag', 'LAFC': 'LAFC', '레알에스': 'Real Estelí',
+  // 25회차 추가 — 유로파/컨퍼런스리그 등
+  '삼순스포': 'Samsunspor', '스켄디야': 'Shkendija', 'NK첼레': 'NK Celje', '드리타': 'Drita',
+  '리예카': 'Rijeka', '오모니아': 'Omonia', '페렌츠바': 'Ferencvaros', '루도고레': 'Ludogorets',
+  '플젠': 'Viktoria Plzen', '파나티나': 'Panathinaikos', '츠르베나': 'Crvena Zvezda',
+  '셀틱': 'Celtic', 'L포즈난': 'Lech Poznan', 'KuPS': 'KuPS',
+  'FC노아': 'FC Noah', '크리스털': 'Crystal Palace', '즈린스키': 'Zrinjski',
+  '로잔스포': 'Lausanne Sport', 'SK시그마': 'Sigma Olomouc', 'KRC헹크': 'KRC Genk',
+  'D자그레': 'Dinamo Zagreb', 'PAOK': 'PAOK', 'SK브란': 'SK Brann',
+  '노팅엄포': 'Nottingham Forest', '페네르SK': 'Fenerbahce',
+  '슈투트가': 'Stuttgart', '셰필드U': 'Sheffield United',
+  // 국가대표 (CONCACAF 등)
+  '자메이M': 'Jamaica', '바하마M': 'Bahamas', '푸에르M': 'Puerto Rico',
+  '캐나다M': 'Canada', '니카라M': 'Nicaragua', '멕시코M': 'Mexico',
+  '미국M': 'USA', '도미공M': 'Dominican Republic',
 };
 
 // 리그명 매핑 (와이즈토토 → DB)
@@ -2301,7 +2315,7 @@ app.listen(PORT, () => {
   }
   
   scheduleSaleTriggers();
-  console.log('Scheduled: 2h regular + Mon/Wed/Fri 14:05 KST sale triggers');
+  console.log('Scheduled: 3h regular + Mon/Wed/Fri 14:05 KST sale triggers');
 });
 
 process.on('SIGTERM', async () => {
