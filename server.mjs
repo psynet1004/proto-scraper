@@ -249,14 +249,12 @@ async function doScrapeAndSave() {
       ], wait: null, extraWait: 15000 },
       // fpai (footballpredictions.ai): 별도 처리 - 개별 매치 페이지에서 correct score 추출
       { name: 'vitibet', urls: [
-        // quicktips (승/무/패만 + 7일치 커버리지)
-        'https://www.vitibet.com/index.php?clanek=quicktips_toptips&sekce=fotbal&lang=en',
-        'https://www.vitibet.com/index.php?clanek=quicktips&sekce=fotbal&lang=en',
-        // 리그별 tips 페이지 (스코어 포함!)
+        // 리그별 tips 페이지 먼저 (스코어 포함! vetsipismo 정확한 예측 행)
         'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=champions2&lang=en',  // UCL
         'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=champions3&lang=en',  // UEL
         'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=champions4&lang=en',  // UECL
         'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=anglie&lang=en',      // EPL
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=angliedruha&lang=en', // Championship
         'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=spanelsko&lang=en',   // La Liga
         'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=italie&lang=en',      // Serie A
         'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=nemecko&lang=en',     // Bundesliga
@@ -266,6 +264,9 @@ async function doScrapeAndSave() {
         'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=japonsko&lang=en',    // J-League
         'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=japonskodruha&lang=en', // J2-League
         'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=usa&lang=en',          // MLS
+        // quicktips 마지막 (승/무/패 fallback - 위에서 못 잡은 경기만)
+        'https://www.vitibet.com/index.php?clanek=quicktips_toptips&sekce=fotbal&lang=en',
+        'https://www.vitibet.com/index.php?clanek=quicktips&sekce=fotbal&lang=en',
       ], wait: null, extraWait: 0 },
     ];
 
@@ -1037,12 +1038,12 @@ function parseVitibet(html, homeEn, awayEn) {
   }
   let result = null;
 
-  // 1차: vetsipismo 클래스가 있는 행만 검색 (예측 데이터)
+  // 1차: vetsipismo + barvapodtipek 둘 다 있는 행 = 확실한 예측 행
   $('tr').each((_, row) => {
     if (result) return;
-    // vetsipismo 클래스가 있는 td가 있는 행만 대상
     const hasVetsipismo = $(row).find('td.vetsipismo').length > 0;
-    if (!hasVetsipismo) return;
+    const hasTipIndicator = $(row).find('td[class*="barvapodtipek"]').length > 0;
+    if (!hasVetsipismo || !hasTipIndicator) return;
     
     const text = $(row).text();
     if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
@@ -1056,14 +1057,14 @@ function parseVitibet(html, homeEn, awayEn) {
       });
     });
 
-    // 디버그: vetsipismo 매칭 행 로그 (Stoke, Sheffield 등 문제 경기만)
+    // 디버그: vetsipismo 매칭 행 로그
     const debugTeams = ['stoke', 'sheffield', 'oxford', 'coventry'];
     if (debugTeams.some(dt => text.toLowerCase().includes(dt))) {
       const vTds = tds.filter(td => td.class.includes('vetsipismo')).map(td => td.text);
-      console.log(`  [vitibet-debug] ${homeEn} vs ${awayEn}: vetsipismo=[${vTds.join(',')}] row=${text.substring(0, 150)}`);
+      console.log(`  [vitibet-debug] ${homeEn} vs ${awayEn}: vetsipismo=[${vTds.join(',')}] hasTip=${hasTipIndicator}`);
     }
 
-    // 방법 1: vetsipismo 클래스에서 예측 스코어 추출 (tips 페이지)
+    // vetsipismo 클래스에서 예측 스코어 추출
     let homeGoals = null, awayGoals = null;
     let foundColon = false;
     for (let i = 0; i < tds.length; i++) {
@@ -1089,6 +1090,54 @@ function parseVitibet(html, homeEn, awayEn) {
       return;
     }
   });
+
+  // 1.5차: vetsipismo만 있는 행 (barvapodtipek 없는 경우 - 다른 페이지 구조)
+  if (!result) {
+  $('tr').each((_, row) => {
+    if (result) return;
+    const hasVetsipismo = $(row).find('td.vetsipismo').length > 0;
+    if (!hasVetsipismo) return;
+    // barvapodtipek 있는 행은 이미 1차에서 처리됨
+    const hasTipIndicator = $(row).find('td[class*="barvapodtipek"]').length > 0;
+    if (hasTipIndicator) return;
+    
+    const text = $(row).text();
+    if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
+
+    const tds = [];
+    $(row).find('td').each((_, td) => {
+      tds.push({
+        text: $(td).text().trim(),
+        class: $(td).attr('class') || '',
+      });
+    });
+
+    let homeGoals = null, awayGoals = null;
+    let foundColon = false;
+    for (let i = 0; i < tds.length; i++) {
+      const td = tds[i];
+      if (td.class.includes('vetsipismo') && /^\d+$/.test(td.text)) {
+        if (homeGoals === null) {
+          homeGoals = parseInt(td.text);
+        } else if (foundColon) {
+          awayGoals = parseInt(td.text);
+          break;
+        }
+      }
+      if (td.text === ':' && homeGoals !== null) {
+        foundColon = true;
+      }
+    }
+
+    if (homeGoals !== null && awayGoals !== null) {
+      result = {
+        predicted_score: `${homeGoals}-${awayGoals}`,
+        predicted_result: homeGoals > awayGoals ? '승' : homeGoals < awayGoals ? '패' : '무',
+      };
+      return;
+    }
+  });
+  }
 
   // 2차: vetsipismo 없는 행 fallback (quicktips 등 다른 페이지 구조)
   if (!result) {
