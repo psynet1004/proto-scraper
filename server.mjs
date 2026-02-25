@@ -222,6 +222,10 @@ async function doScrapeAndSave() {
         'https://www.windrawwin.com/predictions/today/',
         'https://www.windrawwin.com/predictions/tomorrow/',
         'https://www.windrawwin.com/predictions/weekend/',
+        // 유럽 대회
+        'https://www.windrawwin.com/tips/champions-league/',
+        'https://www.windrawwin.com/tips/europa-league/',
+        'https://www.windrawwin.com/tips/europa-conference-league/',
         // 리그별 페이지 (J리그, A리그, MLS 등 today/tomorrow에 안 나오는 리그)
         'https://www.windrawwin.com/predictions/japan-j-league/',
         'https://www.windrawwin.com/predictions/japan-j2-league/',
@@ -232,6 +236,10 @@ async function doScrapeAndSave() {
       { name: 'predictz', urls: [
         'https://www.predictz.com/predictions/',
         'https://www.predictz.com/predictions/tomorrow/',
+        // 유럽 대회
+        'https://www.predictz.com/predictions/europe/champions-league/',
+        'https://www.predictz.com/predictions/europe/europa-league/',
+        'https://www.predictz.com/predictions/europe/europa-conference-league/',
         // 리그별 페이지
         'https://www.predictz.com/predictions/japan/j-league/',
         'https://www.predictz.com/predictions/japan/j2-league/',
@@ -1392,6 +1400,16 @@ const ALIAS_MAP = {
   'CFR Cluj': ['CFR Cluj', 'CFR 1907 Cluj'],
   'Trabzonspor': ['Trabzonspor'],
   'Basaksehir': ['Basaksehir', 'Başakşehir', 'Istanbul Basaksehir'],
+  // 25회차 추가
+  'Ludogorets': ['Ludogorets', 'Ludogorets Razgrad', 'PFC Ludogorets'],
+  'Rijeka': ['Rijeka', 'HNK Rijeka'],
+  'Samsunspor': ['Samsunspor', 'Yılport Samsunspor'],
+  'NK Celje': ['NK Celje', 'Celje'],
+  'Lausanne Sport': ['Lausanne Sport', 'Lausanne', 'FC Lausanne-Sport'],
+  'Sigma Olomouc': ['Sigma Olomouc', 'SK Sigma Olomouc', 'Olomouc'],
+  'Jagiellonia': ['Jagiellonia', 'Jagiellonia Bialystok', 'Jagiellonia Białystok'],
+  'Lech Poznan': ['Lech Poznan', 'Lech Poznań', 'Lech'],
+  'KuPS': ['KuPS', 'KUPS', 'KuPS Kuopio', 'Kuopion PS'],
 
 };
 
@@ -1597,6 +1615,13 @@ const TEAM_MAP = {
   'D자그레': 'Dinamo Zagreb', 'PAOK': 'PAOK', 'SK브란': 'SK Brann',
   '노팅엄포': 'Nottingham Forest', '페네르SK': 'Fenerbahce',
   '슈투트가': 'Stuttgart', '셰필드U': 'Sheffield United',
+  // 25회차 추가 2차 — 누락분
+  '코번트리': 'Coventry City', '갈라타사': 'Galatasaray', 'SL벤피카': 'Benfica',
+  '야기엘로': 'Jagiellonia', '아이슬란': 'Iceland',
+  // 국가대표 추가
+  '괌M': 'Guam', '호주M': 'Australia', '일본M': 'Japan', '중국M': 'China',
+  '대만M': 'Taiwan', '한국M': 'South Korea', '필리핀M': 'Philippines', '뉴질랜M': 'New Zealand',
+  '멕시코': 'Mexico',
   // 국가대표 (CONCACAF 등)
   '자메이M': 'Jamaica', '바하마M': 'Bahamas', '푸에르M': 'Puerto Rico',
   '캐나다M': 'Canada', '니카라M': 'Nicaragua', '멕시코M': 'Mexico',
