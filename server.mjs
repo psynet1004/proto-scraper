@@ -1062,18 +1062,23 @@ function parseVitibet(html, homeEn, awayEn) {
     }
 
     // 방법 2: td 시퀀스에서 "숫자 : 숫자" 패턴 (vetsipismo 클래스 없는 경우)
+    // 마지막 매칭을 사용 — 예측 스코어는 행의 뒤쪽에 위치
+    let lastMatch = null;
     for (let i = 0; i < tds.length - 2; i++) {
       const a = tds[i].text, sep = tds[i+1].text, b = tds[i+2].text;
       if (/^\d+$/.test(a) && sep === ':' && /^\d+$/.test(b)) {
         const hg = parseInt(a), ag = parseInt(b);
         if (hg < 20 && ag < 20) {
-          result = {
-            predicted_score: `${hg}-${ag}`,
-            predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
-          };
-          return;
+          lastMatch = { hg, ag };
         }
       }
+    }
+    if (lastMatch) {
+      result = {
+        predicted_score: `${lastMatch.hg}-${lastMatch.ag}`,
+        predicted_result: lastMatch.hg > lastMatch.ag ? '승' : lastMatch.hg < lastMatch.ag ? '패' : '무',
+      };
+      return;
     }
 
     // 방법 3: barvapodtipek 클래스에서 tip만 추출 (스코어 없는 quicktips 페이지)
