@@ -249,22 +249,7 @@ async function doScrapeAndSave() {
       ], wait: null, extraWait: 15000 },
       // fpai (footballpredictions.ai): 별도 처리 - 개별 매치 페이지에서 correct score 추출
       { name: 'vitibet', urls: [
-        // 리그별 tips 페이지 먼저 (스코어 포함! vetsipismo 정확한 예측 행)
-        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=champions2&lang=en',  // UCL
-        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=champions3&lang=en',  // UEL
-        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=champions4&lang=en',  // UECL
-        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=anglie&lang=en',      // EPL
-        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=angliedruha&lang=en', // Championship
-        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=spanelsko&lang=en',   // La Liga
-        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=italie&lang=en',      // Serie A
-        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=nemecko&lang=en',     // Bundesliga
-        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=francie&lang=en',     // Ligue 1
-        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=holandsko&lang=en',   // Eredivisie
-        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=australie&lang=en',   // A-League
-        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=japonsko&lang=en',    // J-League
-        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=japonskodruha&lang=en', // J2-League
-        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=usa&lang=en',          // MLS
-        // quicktips 마지막 (승/무/패 fallback - 위에서 못 잡은 경기만)
+        // quicktips 페이지 (fetch로 경기 데이터 포함 — tips 페이지는 JS 렌더링 필요라 fetch로 빈 HTML)
         'https://www.vitibet.com/index.php?clanek=quicktips_toptips&sekce=fotbal&lang=en',
         'https://www.vitibet.com/index.php?clanek=quicktips&sekce=fotbal&lang=en',
       ], wait: null, extraWait: 0 },
@@ -1038,12 +1023,12 @@ function parseVitibet(html, homeEn, awayEn) {
   }
   let result = null;
 
-  // 1차: vetsipismo + barvapodtipek 둘 다 있는 행 = 확실한 예측 행
+  // 1차: vetsipismo + standardbunkaprocenta(확률%) 둘 다 있는 행 = 확실한 예측 행
   $('tr').each((_, row) => {
     if (result) return;
     const hasVetsipismo = $(row).find('td.vetsipismo').length > 0;
-    const hasTipIndicator = $(row).find('td[class*="barvapodtipek"]').length > 0;
-    if (!hasVetsipismo || !hasTipIndicator) return;
+    const hasProba = $(row).find('td.standardbunkaprocenta').length > 0;
+    if (!hasVetsipismo || !hasProba) return;
     
     const text = $(row).text();
     if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
@@ -1053,15 +1038,14 @@ function parseVitibet(html, homeEn, awayEn) {
       tds.push({
         text: $(td).text().trim(),
         class: $(td).attr('class') || '',
-        width: $(td).attr('width') || '',
       });
     });
 
-    // 디버그: vetsipismo 매칭 행 로그
+    // 디버그
     const debugTeams = ['stoke', 'sheffield', 'oxford', 'coventry'];
     if (debugTeams.some(dt => text.toLowerCase().includes(dt))) {
       const vTds = tds.filter(td => td.class.includes('vetsipismo')).map(td => td.text);
-      console.log(`  [vitibet-debug] ${homeEn} vs ${awayEn}: vetsipismo=[${vTds.join(',')}] hasTip=${hasTipIndicator}`);
+      console.log(`  [vitibet-debug] ${homeEn} vs ${awayEn}: vetsipismo=[${vTds.join(',')}] hasProba=${hasProba}`);
     }
 
     // vetsipismo 클래스에서 예측 스코어 추출
@@ -1088,6 +1072,17 @@ function parseVitibet(html, homeEn, awayEn) {
         predicted_result: homeGoals > awayGoals ? '승' : homeGoals < awayGoals ? '패' : '무',
       };
       return;
+    }
+
+    // vetsipismo 스코어 못 잡으면 barvapodtipek에서 승/무/패
+    for (const td of tds) {
+      if (result) break;
+      if (td.class.includes('barvapodtipek') || td.class.includes('tip')) {
+        const tip = td.text.trim();
+        if (tip === '1' || tip === '10' || tip === '01') { result = { predicted_score: null, predicted_result: '승' }; }
+        else if (tip === '2' || tip === '20' || tip === '02') { result = { predicted_score: null, predicted_result: '패' }; }
+        else if (tip.toUpperCase() === 'X' || tip === '0X' || tip === 'X0') { result = { predicted_score: null, predicted_result: '무' }; }
+      }
     }
   });
 
