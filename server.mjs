@@ -520,7 +520,8 @@ function parseWindrawwin(html, homeEn, awayEn) {
   else { $ = cheerio.load(html); _wdwCache = { html, $ }; }
   let result = null;
 
-  $('div.wtfixt, div[class*="wtfixt"]').each((_, row) => {
+  // 1차: div.wtfixt (predictions 페이지) + div.wttr (/tips/ 페이지)
+  $('div.wtfixt, div[class*="wtfixt"], div.wttr').each((_, row) => {
     if (result) return;
     const text = $(row).text();
     if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
@@ -529,7 +530,8 @@ function parseWindrawwin(html, homeEn, awayEn) {
     const grandparent = parent.parent();
     
     let score = '';
-    for (const container of [parent, grandparent]) {
+    // predscore / wtsc 클래스에서 스코어 찾기
+    for (const container of [$(row), parent, grandparent]) {
       const sc = container.find('.predscore').first().text().trim();
       if (sc) { score = sc; break; }
       const sc2 = container.find('.wtsc').first().text().trim();
@@ -557,8 +559,22 @@ function parseWindrawwin(html, homeEn, awayEn) {
       };
     }
 
+    // /tips/ 페이지: "Home Win2-1" 또는 "Away Win0-2" 또는 "Draw1-1" 패턴
     if (!result) {
-      const allText = grandparent.text().toLowerCase();
+      const allText = text;
+      // "Home Win2-1", "Away Win0-3", "Draw1-1" 패턴 매칭
+      const tipMatch = allText.match(/(?:Home Win|Away Win|Draw)\s*(\d+)\s*[-–]\s*(\d+)/i);
+      if (tipMatch) {
+        const hg = parseInt(tipMatch[1]), ag = parseInt(tipMatch[2]);
+        result = {
+          predicted_score: `${hg}-${ag}`,
+          predicted_result: hg > ag ? '승' : hg < ag ? '패' : '무',
+        };
+      }
+    }
+
+    if (!result) {
+      const allText = (grandparent.text() || text).toLowerCase();
       if (allText.includes('home win')) result = { predicted_score: null, predicted_result: '승' };
       else if (allText.includes('away win')) result = { predicted_score: null, predicted_result: '패' };
       else if (allText.includes('draw')) result = { predicted_score: null, predicted_result: '무' };
