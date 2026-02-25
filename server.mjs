@@ -375,12 +375,16 @@ async function doScrapeAndSave() {
       // 디버그: 처음 10개 미매칭 팀명 로그
       if (unmatched > 0) {
         let debugCount = 0;
+        const lowerHtml = html.toLowerCase();
         for (const match of matches || []) {
           if (debugCount >= 10) break;
           if (!match.home_team_en || !match.away_team_en) continue;
           const p = extractPrediction(html, match.home_team_en, match.away_team_en, src.name);
           if (!p) {
-            console.log(`  DEBUG ${src.name}: no match for "${match.home_team_en}" vs "${match.away_team_en}"`);
+            // HTML에 팀명이 있는지 확인
+            const homeInHtml = lowerHtml.includes(match.home_team_en.toLowerCase().substring(0, 5));
+            const awayInHtml = lowerHtml.includes(match.away_team_en.toLowerCase().substring(0, 5));
+            console.log(`  DEBUG ${src.name}: no match for "${match.home_team_en}" vs "${match.away_team_en}" [inHTML: ${homeInHtml}/${awayInHtml}]`);
             debugCount++;
           }
         }
@@ -1052,6 +1056,13 @@ function parseVitibet(html, homeEn, awayEn) {
       });
     });
 
+    // 디버그: vetsipismo 매칭 행 로그 (Stoke, Sheffield 등 문제 경기만)
+    const debugTeams = ['stoke', 'sheffield', 'oxford', 'coventry'];
+    if (debugTeams.some(dt => text.toLowerCase().includes(dt))) {
+      const vTds = tds.filter(td => td.class.includes('vetsipismo')).map(td => td.text);
+      console.log(`  [vitibet-debug] ${homeEn} vs ${awayEn}: vetsipismo=[${vTds.join(',')}] row=${text.substring(0, 150)}`);
+    }
+
     // 방법 1: vetsipismo 클래스에서 예측 스코어 추출 (tips 페이지)
     let homeGoals = null, awayGoals = null;
     let foundColon = false;
@@ -1421,7 +1432,7 @@ const ALIAS_MAP = {
   'FC Noah': ['FC Noah', 'Noah FC', 'Noah'],
   'Zrinjski': ['Zrinjski', 'Zrinjski Mostar', 'HŠK Zrinjski'],
   'Drita': ['Drita', 'FC Drita', 'KF Drita'],
-  'Shkendija': ['Shkendija', 'KF Shkëndija', 'Shkendija Tetovo'],
+  'Shkendija': ['Shkendija', 'KF Shkëndija', 'Shkendija Tetovo', 'Skendija', 'Skendija 79', 'KF Shkendija 79'],
 
   // ACL / 중동 팀
   'Al Ahli': ['Al Ahli', 'Al-Ahli', 'Al Ahli Saudi', 'Al Ahli SFC'],
