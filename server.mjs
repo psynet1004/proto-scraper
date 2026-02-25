@@ -1033,8 +1033,13 @@ function parseVitibet(html, homeEn, awayEn) {
   }
   let result = null;
 
+  // 1차: vetsipismo 클래스가 있는 행만 검색 (예측 데이터)
   $('tr').each((_, row) => {
     if (result) return;
+    // vetsipismo 클래스가 있는 td가 있는 행만 대상
+    const hasVetsipismo = $(row).find('td.vetsipismo').length > 0;
+    if (!hasVetsipismo) return;
+    
     const text = $(row).text();
     if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
 
@@ -1072,6 +1077,23 @@ function parseVitibet(html, homeEn, awayEn) {
       };
       return;
     }
+  });
+
+  // 2차: vetsipismo 없는 행 fallback (quicktips 등 다른 페이지 구조)
+  if (!result) {
+  $('tr').each((_, row) => {
+    if (result) return;
+    const text = $(row).text();
+    if (!fuzzy(text, homeEn) || !fuzzy(text, awayEn)) return;
+
+    const tds = [];
+    $(row).find('td').each((_, td) => {
+      tds.push({
+        text: $(td).text().trim(),
+        class: $(td).attr('class') || '',
+        width: $(td).attr('width') || '',
+      });
+    });
 
     // 방법 2: td 시퀀스에서 "숫자 : 숫자" 패턴 (vetsipismo 클래스 없는 경우)
     // 마지막 매칭을 사용 — 예측 스코어는 행의 뒤쪽에 위치
@@ -1115,6 +1137,7 @@ function parseVitibet(html, homeEn, awayEn) {
       }
     }
   });
+  }
 
   return result;
 }
