@@ -249,10 +249,17 @@ async function doScrapeAndSave() {
       ], wait: null, extraWait: 15000 },
       // fpai (footballpredictions.ai): 별도 처리 - 개별 매치 페이지에서 correct score 추출
       { name: 'vitibet', urls: [
-        // quicktips 페이지 (fetch로 경기 데이터 포함 — tips 페이지는 JS 렌더링 필요라 fetch로 빈 HTML)
-        'https://www.vitibet.com/index.php?clanek=quicktips_toptips&sekce=fotbal&lang=en',
-        'https://www.vitibet.com/index.php?clanek=quicktips&sekce=fotbal&lang=en',
-      ], wait: null, extraWait: 0 },
+        // tips 페이지 (Puppeteer 필요 — JS 렌더링), 핵심 리그만
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=champions2&lang=en',  // UCL
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=champions3&lang=en',  // UEL
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=champions4&lang=en',  // UECL
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=anglie&lang=en',      // EPL
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=angliedruha&lang=en', // Championship
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=spanelsko&lang=en',   // La Liga
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=italie&lang=en',      // Serie A
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=nemecko&lang=en',     // Bundesliga
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=francie&lang=en',     // Ligue 1
+      ], wait: 'table', extraWait: 0, usePuppeteer: true },
     ];
 
     let saved = 0;
@@ -268,8 +275,13 @@ async function doScrapeAndSave() {
           
           let pageHtml = '';
           try {
-            // vitibet: CF 보호 없으므로 native fetch 사용 (Puppeteer 타임아웃 방지)
-            if (src.name === 'vitibet') {
+            // vitibet tips 페이지: Puppeteer 필요 (JS 렌더링)
+            if (src.usePuppeteer) {
+              pageHtml = await getPage(url, src.wait, 30000, src.extraWait || 0);
+              // 각 페이지 후 브라우저 닫아서 메모리 확보
+              if (browser) { try { await browser.close(); } catch(e2) {} browser = null; }
+            } else if (src.name === 'vitibet') {
+              // quicktips fallback: fetch 사용
               const resp = await fetch(url, {
                 headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
                 signal: AbortSignal.timeout(15000),
