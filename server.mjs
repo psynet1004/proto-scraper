@@ -91,6 +91,11 @@ async function getPage(url, waitSelector, timeout = 60000, extraWait = 0, humani
         const title = await page.title();
         console.log(`  CF check ${i+1}/18: title="${title}"`);
         if (!title.includes('moment') && !title.includes('Just') && !title.includes('Checking')) break;
+        // 5번 연속 CF 차단이면 포기 (25초)
+        if (i >= 4) {
+          console.log(`  CF blocked after ${i+1} attempts, giving up`);
+          break;
+        }
         
         // 3회 폴링마다 마우스 이동 (인간처럼)
         if (humanize && i % 3 === 2) {
@@ -301,9 +306,9 @@ async function doScrapeAndSave() {
               console.log(`  ${label}: force-closing browser after failure`);
               if (browser) { try { await browser.close(); } catch(e2) {} browser = null; }
             }
-            // predictz: 첫 URL CF 차단 시 나머지 URL도 차단될 가능성 높으므로 전체 스킵
-            if (src.name === 'predictz' && i === 0) {
-              console.log(`  predictz: first URL failed, skipping remaining URLs`);
+            // predictz: CF 차단 시 나머지 URL도 차단될 가능성 높으므로 전체 스킵
+            if (src.name === 'predictz') {
+              console.log(`  predictz: CF blocked on URL ${i}, skipping remaining URLs`);
               break;
             }
             continue;
@@ -312,6 +317,11 @@ async function doScrapeAndSave() {
           // Cloudflare 차단 확인
           if (pageHtml.includes('Just a moment') || pageHtml.includes('Checking your browser')) {
             console.log(`  ${label} WARNING: Cloudflare blocked! Skipping this URL...`);
+            if (src.name === 'predictz') {
+              console.log(`  predictz: CF in HTML on URL ${i}, skipping remaining`);
+              if (browser) { try { await browser.close(); } catch(e2) {} browser = null; }
+              break;
+            }
             continue;
           }
           
