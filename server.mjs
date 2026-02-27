@@ -231,12 +231,21 @@ async function doScrapeAndSave() {
         'https://www.windrawwin.com/tips/champions-league/',
         'https://www.windrawwin.com/tips/europa-league/',
         'https://www.windrawwin.com/tips/europa-conference-league/',
-        // 리그별 페이지 (J리그, A리그, MLS 등 today/tomorrow에 안 나오는 리그)
+        // 리그별 tips 페이지 — 다음 경기 예측이 날짜와 관계없이 나옴 (월요일 포함!)
         'https://www.windrawwin.com/predictions/japan-j-league/',
         'https://www.windrawwin.com/predictions/japan-j2-league/',
         'https://www.windrawwin.com/predictions/australia-a-league/',
         'https://www.windrawwin.com/predictions/usa-mls/',
         'https://www.windrawwin.com/predictions/england-championship/',
+        // 26회차 추가 — K리그, WCQ, 추가 유럽 리그
+        'https://www.windrawwin.com/tips/south-korea-k-league-1/',
+        'https://www.windrawwin.com/tips/south-korea-k-league-2/',
+        'https://www.windrawwin.com/tips/world-cup-qualifying/',
+        'https://www.windrawwin.com/predictions/netherlands-eredivisie/',
+        'https://www.windrawwin.com/predictions/spain-la-liga-2/',
+        'https://www.windrawwin.com/predictions/italy-serie-b/',
+        'https://www.windrawwin.com/predictions/france-ligue-2/',
+        'https://www.windrawwin.com/predictions/germany-2-bundesliga/',
       ], wait: null, extraWait: 0 },
       { name: 'predictz', urls: [
         'https://www.predictz.com/predictions/',
@@ -251,6 +260,15 @@ async function doScrapeAndSave() {
         'https://www.predictz.com/predictions/australia/a-league/',
         'https://www.predictz.com/predictions/usa/mls/',
         'https://www.predictz.com/predictions/england/championship/',
+        // 26회차 추가 — K리그, WCQ, 추가 유럽 리그
+        'https://www.predictz.com/predictions/south-korea/k-league-1/',
+        'https://www.predictz.com/predictions/south-korea/k-league-2/',
+        'https://www.predictz.com/predictions/international/world-cup-2026-qualifying/',
+        'https://www.predictz.com/predictions/netherlands/eredivisie/',
+        'https://www.predictz.com/predictions/spain/segunda-division/',
+        'https://www.predictz.com/predictions/italy/serie-b/',
+        'https://www.predictz.com/predictions/france/ligue-2/',
+        'https://www.predictz.com/predictions/germany/2-bundesliga/',
       ], wait: null, extraWait: 15000 },
       // fpai (footballpredictions.ai): 별도 처리 - 개별 매치 페이지에서 correct score 추출
       { name: 'vitibet', urls: [
@@ -264,6 +282,11 @@ async function doScrapeAndSave() {
         'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=italie&lang=en',      // Serie A
         'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=nemecko&lang=en',     // Bundesliga
         'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=francie&lang=en',     // Ligue 1
+        // 26회차 추가 리그
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=holandsko&lang=en',   // Eredivisie
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=spanelskodruha&lang=en', // La Liga 2
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=nemeckodruha&lang=en',   // Bundesliga 2
+        'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=franciedruha&lang=en',   // Ligue 2
       ], wait: 'table', extraWait: 0, usePuppeteer: true },
     ];
 
