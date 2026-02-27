@@ -1761,6 +1761,46 @@ const TEAM_MAP = {
   '자메이M': 'Jamaica', '바하마M': 'Bahamas', '푸에르M': 'Puerto Rico',
   '캐나다M': 'Canada', '니카라M': 'Nicaragua', '멕시코M': 'Mexico',
   '미국M': 'USA', '도미공M': 'Dominican Republic',
+  // 26회차 추가 — 월드컵 예선 국가대표
+  '우크라M': 'Ukraine', '스페인M': 'Spain', '이라크M': 'Iraq', '시리아M': 'Syria',
+  '이란M': 'Iran', '요르단M': 'Jordan', '그리스M': 'Greece', '몬테네M': 'Montenegro',
+  '오스트M': 'Austria', '네덜란M': 'Netherlands', '헝가리M': 'Hungary', '프랑스M': 'France',
+  '덴마크M': 'Denmark', '조지아M': 'Georgia', '라트비M': 'Latvia', '폴란드M': 'Poland',
+  '슬로베M': 'Slovenia', '체코M': 'Czech Republic', '세르비M': 'Serbia', '튀르키M': 'Turkey',
+  '스웨덴M': 'Sweden', '에스토M': 'Estonia', '포르투M': 'Portugal', '루마니M': 'Romania',
+  '보스니M': 'Bosnia', '스위스M': 'Switzerland', '크로아M': 'Croatia', '독일M': 'Germany',
+  '이스라M': 'Israel', '키프로M': 'Cyprus', '레바논M': 'Lebanon', '사우디M': 'Saudi Arabia',
+  '영국M': 'England', '이탈리M': 'Italy', '아이슬M': 'Iceland', '리투아M': 'Lithuania',
+  '벨기에M': 'Belgium', '핀란드M': 'Finland',
+  '브라질M': 'Brazil', '베네수M': 'Venezuela', '칠레M': 'Chile', '콜롬비M': 'Colombia',
+  '아르헨M': 'Argentina', '우루과M': 'Uruguay', '쿠바M': 'Cuba', '파나마M': 'Panama',
+  // 26회차 추가 — K리그1 / K리그2
+  '인천유나': 'Incheon United', 'FC서울': 'FC Seoul', '울산HDFC': 'Ulsan HD FC',
+  '강원FC': 'Gangwon FC', '김해FC': 'Gimhae FC', '안산그리': 'Ansan Greeners',
+  '센트매리': 'Central Coast Mariners', '김천상무': 'Gimcheon Sangmu',
+  '포항스틸': 'Pohang Steelers', '수원삼성': 'Suwon Samsung', '서울이랜': 'Seoul E-Land',
+  '제주SKFC': 'Jeju United', '광주FC': 'Gwangju FC', '경남FC': 'Gyeongnam FC',
+  '전남드래': 'Jeonnam Dragons', '부천FC': 'Bucheon FC', '용인FC': 'Yongin FC',
+  '천안시티': 'Cheonan City FC', '대구FC': 'Daegu FC', '화성FC': 'Hwaseong FC',
+  '충북청주': 'Chungbuk Cheongju', '수원FC': 'Suwon FC', 'FC안양': 'FC Anyang',
+  '충남아산': 'Chungnam Asan', '파주프런': 'Paju Frontier',
+  // 26회차 추가 — MLS
+  '시카파이': 'Chicago Fire', 'CF몽레알': 'CF Montreal', '뉴욕레드': 'New York Red Bulls',
+  '뉴잉레벌': 'New England Revolution', '콜로래피': 'Colorado Rapids', '포틀팀버': 'Portland Timbers',
+  '미네유나': 'Minnesota United', 'FC신시내': 'FC Cincinnati', '레알솔트': 'Real Salt Lake',
+  '시애사운': 'Seattle Sounders', '새너어스': 'San Jose Earthquakes', '애틀유나': 'Atlanta United',
+  'FC댈러스': 'FC Dallas', '내슈빌SC': 'Nashville SC', '휴스다이': 'Houston Dynamo',
+  '스포캔자': 'Sporting Kansas City', '콜럼크루': 'Columbus Crew', '밴쿠화이': 'Vancouver Whitecaps',
+  '토론토FC': 'Toronto FC', 'LA갤럭시': 'LA Galaxy', '샬럿FC': 'Charlotte FC',
+  '오스틴FC': 'Austin FC', 'DC유나이': 'DC United', '필라유니': 'Philadelphia Union',
+  '뉴욕시티': 'New York City FC', '올랜시티': 'Orlando City', '인터마이': 'Inter Miami',
+  '샌디에FC': 'San Diego FC', '세인시티': 'St. Louis City',
+  // 26회차 추가 — 기타 클럽
+  '쾰른': 'Koln', '칼리아리': 'Cagliari', 'US레체': 'Lecce', '묀헨글라': 'Monchengladbach',
+  '브렌트퍼': 'Brentford', '맨체스C': 'Manchester City', '맥아서FC': 'Macarthur FC',
+  '폴렌담': 'Volendam', '이마바리': 'FC Imabari', '리즈U': 'Leeds United',
+  // 추가 J2 클럽
+  '이마바리': 'FC Imabari',
 };
 
 // 리그명 매핑 (와이즈토토 → DB)
@@ -1778,6 +1818,9 @@ const LEAGUE_MAP = {
   'FA컵': 'FACup', '코파델레': 'CopaDelRey', '국왕컵': 'CopaDelRey',
   'DFB포칼': 'DFBPokal',
   'K슈퍼컵': 'KLeague', 'K리그1': 'KLeague', 'K리그2': 'KLeague2',
+  // 26회차 추가 리그
+  '남농월예': 'WCQ', '남미월예': 'WCQ', '월드컵예': 'WCQ', '월예선': 'WCQ',
+  'AFC월예': 'WCQ', '세리에B': 'SerieB', '리그앙': 'Ligue1',
 };
 
 // ====== DEBUG: 실제 HTML 구조 확인 ======
