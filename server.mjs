@@ -154,10 +154,21 @@ app.get('/', (req, res) => {
 
 // ====== SCRAPE LOCK ======
 let isRunning = false;
+let isRunningStartedAt = null;
+const MAX_RUNNING_TIME = 30 * 60 * 1000; // 30분 타임아웃
+
+function checkRunningLock() {
+  if (isRunning && isRunningStartedAt && (Date.now() - isRunningStartedAt > MAX_RUNNING_TIME)) {
+    console.log('⚠ isRunning lock timeout (30min) — force releasing');
+    isRunning = false;
+    isRunningStartedAt = null;
+  }
+  return isRunning;
+}
 
 // ====== SCRAPE & SAVE ======
 app.post('/scrape-and-save', auth, async (req, res) => {
-  if (isRunning) {
+  if (checkRunningLock()) {
     return res.json({ message: 'Already running, skipped', timestamp: new Date().toISOString() });
   }
   res.json({ message: 'Scraping started', timestamp: new Date().toISOString() });
@@ -165,7 +176,7 @@ app.post('/scrape-and-save', auth, async (req, res) => {
 });
 
 app.get('/scrape-and-save', auth, async (req, res) => {
-  if (isRunning) {
+  if (checkRunningLock()) {
     return res.json({ message: 'Already running, skipped', timestamp: new Date().toISOString() });
   }
   res.json({ message: 'Scraping started', timestamp: new Date().toISOString() });
@@ -173,8 +184,9 @@ app.get('/scrape-and-save', auth, async (req, res) => {
 });
 
 async function doScrapeAndSave() {
-  if (isRunning) return;
+  if (checkRunningLock()) return;
   isRunning = true;
+  isRunningStartedAt = Date.now();
 
   try {
     console.log('=== Starting scrape & save ===');
@@ -412,6 +424,7 @@ async function doScrapeAndSave() {
 
   } finally {
     isRunning = false;
+    isRunningStartedAt = null;
     if (browser) {
       try { await browser.close(); } catch(e) {}
       browser = null;
@@ -1027,7 +1040,7 @@ app.get('/html-sample/:site/:team', auth, async (req, res) => {
 
 // ====== FETCH MATCHES ======
 app.get('/fetch-matches', auth, async (req, res) => {
-  if (isRunning) return res.json({ error: 'Scraping in progress, try again later' });
+  if (checkRunningLock()) return res.json({ error: 'Scraping in progress, try again later' });
   if (isFetchingMatches) return res.json({ error: 'Already fetching matches' });
   const roundParam = req.query.round;
   const urlParam = req.query.url;
@@ -1039,7 +1052,7 @@ let isFetchingMatches = false;
 
 async function doFetchMatches(overrideRound = null, urlVariant = null) {
   if (isFetchingMatches) { console.log('  doFetchMatches already running, skip'); return; }
-  if (isRunning) { console.log('  Scraping in progress, skip fetch-matches'); return; }
+  if (checkRunningLock()) { console.log('  Scraping in progress, skip fetch-matches'); return; }
   isFetchingMatches = true;
   try {
     console.log(`=== Fetching match results (no Puppeteer)${overrideRound ? ` [round ${overrideRound}]` : ''} ===`);
