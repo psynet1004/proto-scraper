@@ -286,7 +286,7 @@ async function doScrapeAndSave() {
         'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=korearepublic&lang=en', // K-League
         'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=mls&lang=en',           // MLS
         'https://www.vitibet.com/index.php?clanek=tips&sekce=fotbal&liga=italiedruha&lang=en',   // Serie B
-      ], wait: 'table', extraWait: 0, usePuppeteer: true },
+      ], wait: 'table', extraWait: 0, usePuppeteer: false, useFetch: true },
     ];
 
     let saved = 0;
@@ -304,10 +304,10 @@ async function doScrapeAndSave() {
             if (src.usePuppeteer) {
               pageHtml = await getPage(url, src.wait, 30000, src.extraWait || 0);
               if (browser) { try { await browser.close(); } catch(e2) {} browser = null; }
-            } else if (src.name === 'vitibet') {
+            } else if (src.useFetch || src.name === 'vitibet') {
               const resp = await fetch(url, {
-                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
-                signal: AbortSignal.timeout(15000),
+                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36' },
+                signal: AbortSignal.timeout(25000),
               });
               if (resp.ok) pageHtml = await resp.text();
               else throw new Error(`HTTP ${resp.status}`);
