@@ -824,6 +824,19 @@ const ALIAS_MAP = {
   'Philippines': ['Philippines'], 'Guam': ['Guam'], 'Taiwan': ['Taiwan', 'Chinese Taipei'],
   'Jamaica': ['Jamaica'], 'Dominican Republic': ['Dominican Republic'],
   'Nicaragua': ['Nicaragua'], 'Puerto Rico': ['Puerto Rico'], 'Bahamas': ['Bahamas'],
+  // 27회차 미매핑 추가
+  'Busan IPark': ['Busan IPark', 'Busan I Park', 'Busan', 'Busan I\'Park'],
+  'Seongnam FC': ['Seongnam FC', 'Seongnam'],
+  'Al Shabab': ['Al Shabab', 'Al-Shabab', 'Al Shabab Riyadh'],
+  'Tractor': ['Tractor', 'Tractor SC', 'Tractor Sazi'],
+  'Al Duhail': ['Al Duhail', 'Al-Duhail'],
+  'Buriram United': ['Buriram United', 'Buriram', 'Buriram Utd'],
+  'Al Wahda': ['Al Wahda', 'Al-Wahda'],
+  'Al Ahli Qatar': ['Al Ahli Qatar', 'Al Ahli Doha'],
+  'Al Hussein': ['Al Hussein', 'Al-Hussein'],
+  'Al Sadd': ['Al Sadd', 'Al-Sadd', 'Al Sadd SC'],
+  'Reims': ['Reims', 'Stade de Reims', 'Stade Reims'],
+  'India': ['India'], 'Qatar': ['Qatar'],
 };
 
 function getAliases(teamEn) {
@@ -989,6 +1002,16 @@ const TEAM_MAP = {
   '쾰른': 'Koln', '칼리아리': 'Cagliari', 'US레체': 'Lecce', '묀헨글라': 'Monchengladbach',
   '브렌트퍼': 'Brentford', '맨체스C': 'Manchester City', '맥아서FC': 'Macarthur FC',
   '폴렌담': 'Volendam', '이마바리': 'FC Imabari',
+  // 27회차 미매핑 추가
+  '부산아이': 'Busan IPark', '성남FC': 'Seongnam FC',
+  '샤바브두': 'Al Shabab', '트락토르': 'Tractor',
+  '알두하일': 'Al Duhail', '알아흘사': 'Al Ahli Saudi',
+  '인도M': 'India', '카타르M': 'Qatar',
+  '부리람U': 'Buriram United', 'U알와흐': 'Al Wahda',
+  'S알이티': 'Al Ittihad', 'Q알아흘': 'Al Ahli Qatar',
+  'J알후세': 'Al Hussein', '알사드SC': 'Al Sadd',
+  '알힐랄': 'Al Hilal', '랭스': 'Reims',
+  'PSV': 'PSV',
 };
 
 const LEAGUE_MAP = {
